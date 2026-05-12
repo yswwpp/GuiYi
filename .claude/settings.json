@@ -1,0 +1,36 @@
+{
+  "project": {
+    "name": "GuiYi",
+    "description": "本地优先的个人知识收集与检索系统",
+    "version": "0.1.0"
+  },
+  "hooks": {
+    "afterWrite": [
+      {
+        "match": "guiyi-server/**/*.py",
+        "command": "cd guiyi-server && source .venv/bin/activate && python -m pytest tests/ -v"
+      }
+    ],
+    "beforeCommit": [
+      {
+        "command": "echo 'Running pre-commit checks...'"
+      }
+    ]
+  },
+  "skills": {
+    "enabled": true,
+    "directories": [".claude/skills"]
+  },
+  "agents": {
+    "enabled": true,
+    "directories": [".claude/agents"]
+  },
+  "memory": {
+    "enabled": true,
+    "path": ".claude/memory"
+  },
+  "editor": {
+    "formatOnSave": true,
+    "linter": "auto"
+  }
+}

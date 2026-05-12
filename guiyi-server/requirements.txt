@@ -1,0 +1,62 @@
+# GuiYi Backend Dependencies
+# ========================
+
+# Web Framework
+# -------------
+fastapi==0.115.0           # 现代高性能 Web 框架
+uvicorn[standard]==0.32.0  # ASGI 服务器
+
+# Web Scraping
+# ------------
+trafilatura==1.12.0        # 网页正文提取
+httpx==0.28.0              # 现代异步 HTTP 客户端
+beautifulsoup4==4.13.0     # HTML 解析
+requests==2.32.3           # HTTP 请求库
+
+# Semantic Index
+# --------------
+txtai==8.0.0               # 语义搜索引擎
+
+# Database
+# --------
+sqlalchemy==2.0.36         # ORM 框架
+pymysql==1.1.2             # MySQL 数据库连接
+
+# Task Scheduling
+# ---------------
+apscheduler==3.11.0        # 任务调度
+
+# File Monitoring
+# ---------------
+watchdog==6.0.0            # 文件系统监控
+
+# Credentials Management
+# ----------------------
+keyring==25.5.0            # 系统密钥管理
+
+# Feishu SDK
+# ----------
+lark-oapi==1.4.0           # 飞书开放平台 SDK
+
+# Evernote SDK
+# ------------
+evernote3==1.0.4           # 印象笔记 SDK
+
+# Office Files
+# ------------
+python-docx==1.1.2         # Word 文档处理
+openpyxl==3.1.5            # Excel 文件处理
+PyPDF2==3.0.1              # PDF 文件处理
+
+# Utilities
+# ---------
+python-multipart==0.0.17   # 文件上传支持
+pydantic==2.10.0           # 数据验证
+
+# Development
+# -----------
+pytest==8.3.0              # 测试框架
+pytest-cov==6.0.0          # 测试覆盖率
+black==24.10.0             # 代码格式化
+isort==5.13.0              # import 排序
+mypy==1.13.0               # 类型检查
