@@ -90,3 +90,11 @@ coverage.xml
 # Backup files
 *.bak
 *.backup
+.ai/memory/
+.ai/prompts/
+
+# Agent local files
+CLAUDE.md
+**/CLAUDE.md
+.claude/
+.codex/
