@@ -36,7 +36,7 @@ GuiYi/
 │   ├── index/             # txtai 索引
 │   └── obsidian_vault/    # Obsidian 存储
 ├── docs/                  # 项目文档
-└── .claude/               # Claude Code 配置
+└── .ai/                   # 跨工作空间项目记忆（提交到 Git）
 ```
 
 ---
@@ -80,7 +80,7 @@ uv pip install <package>   # 使用 uv 安装依赖
 - ✅ 在 `guiyi-server/` 下开发 Python 后端
 - ✅ 在 `guiyi-client/` 下开发 Swift 前端
 - ✅ 修改 `docs/` 下的文档
-- ✅ 更新 `.claude/` 下的配置
+- ✅ 更新 `.ai/` 下的跨工作空间记忆
 - ✅ 运行测试和调试
 
 ### 禁止的操作
@@ -143,6 +143,7 @@ xcodebuild -project GuiYi.xcodeproj -scheme GuiYi
 4. **API 端口**：后端服务监听 `http://localhost:8765`
 5. **Python 版本**：使用 Python 3.11+
 6. **模型目录**：程序用到的所有模型统一放在 `/Users/yswwpp/dev/docker_file_sharing/GuiYi/models` 下，不要放到 `guiyi-server/data/index`
+7. **Agent 记忆目录**：只提交 `.ai/` 到 Git；`.codex/` 是本地软链入口，不提交；项目中不使用 `.claude/`
 
 ---
 
