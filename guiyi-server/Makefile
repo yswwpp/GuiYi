@@ -11,8 +11,8 @@ help:
 	@echo ""
 	@echo "可用目标:"
 	@echo "  install       安装依赖"
-	@echo "  run           启动服务 (Phase 2)"
-	@echo "  run-phase3    启动服务 (Phase 3: 飞书多账号)"
+	@echo "  run           启动服务"
+	@echo "  run-phase3    兼容命令：启动服务"
 	@echo "  test          运行测试"
 	@echo "  test-cov      运行测试并生成覆盖率报告"
 	@echo "  lint          代码检查"
@@ -34,13 +34,13 @@ install:
 
 # 启动服务
 run:
-	@echo "启动 GuiYi Backend (Phase 2)..."
-	python main.py
+	@echo "启动 GuiYi Backend..."
+	python -m guiyi_server
 
-# 启动 Phase 3 服务（飞书多账号支持）
+# 兼容旧的 Phase 3 启动命令
 run-phase3:
-	@echo "启动 GuiYi Backend Phase 3 (Feishu Multi-Account)..."
-	python main_phase3.py
+	@echo "run-phase3 已合并到主入口，正在启动 GuiYi Backend..."
+	python -m guiyi_server
 
 # 运行测试
 test:
@@ -116,12 +116,12 @@ files:
 # 开发模式（自动重载）
 dev:
 	@echo "开发模式启动..."
-	uvicorn main:app --reload --host 127.0.0.1 --port 8765
+	uvicorn guiyi_server.app:app --reload --host 127.0.0.1 --port 8765
 
 # 数据库初始化
 init-db:
 	@echo "初始化数据库..."
-	python -c "from config import settings; print(f'数据库路径: {settings.DATABASE_URL}')"
+	@python -c "from guiyi_server.config import settings; print(f'数据库配置: {settings.DB_CONFIG_PATH}')"
 
 # 检查环境
 check-env:

@@ -1,4 +1,4 @@
-"""Compatibility entrypoint for GuiYi backend."""
+"""Run GuiYi backend with `python -m guiyi_server`."""
 
 import uvicorn
 

@@ -3,7 +3,7 @@
 """
 
 import pytest
-from storage.obsidian import ObsidianStorage
+from guiyi_server.storage.obsidian import ObsidianStorage
 import tempfile
 import os
 from pathlib import Path

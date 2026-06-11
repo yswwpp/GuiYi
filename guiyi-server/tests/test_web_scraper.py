@@ -4,7 +4,7 @@
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from adapters.web_scraper import WebScraper
+from guiyi_server.adapters.web_scraper import WebScraper
 import tempfile
 import os
 
@@ -31,7 +31,7 @@ class TestWebScraper:
         assert os.path.exists(self.assets_dir)
         assert self.scraper.session is not None
 
-    @patch('adapters.web_scraper.requests.Session.get')
+    @patch('guiyi_server.adapters.web_scraper.requests.Session.get')
     def test_fetch_full_success(self, mock_get):
         """测试成功抓取网页"""
         # 模拟响应
@@ -60,7 +60,7 @@ class TestWebScraper:
         assert "content" in result
         assert result["url"] == "https://example.com/test"
 
-    @patch('adapters.web_scraper.requests.Session.get')
+    @patch('guiyi_server.adapters.web_scraper.requests.Session.get')
     def test_fetch_full_with_images(self, mock_get):
         """测试抓取包含图片的网页"""
         mock_response = Mock()
@@ -93,7 +93,7 @@ class TestWebScraper:
         assert result is not None
         assert "images" in result
 
-    @patch('adapters.web_scraper.requests.Session.get')
+    @patch('guiyi_server.adapters.web_scraper.requests.Session.get')
     def test_fetch_full_timeout(self, mock_get):
         """测试抓取超时"""
         import requests
@@ -104,7 +104,7 @@ class TestWebScraper:
 
         assert "超时" in str(exc_info.value) or "抓取" in str(exc_info.value)
 
-    @patch('adapters.web_scraper.requests.Session.get')
+    @patch('guiyi_server.adapters.web_scraper.requests.Session.get')
     def test_fetch_full_http_error(self, mock_get):
         """测试 HTTP 错误"""
         import requests
@@ -148,7 +148,7 @@ class TestWebScraper:
         assert markdown is not None
         assert len(markdown) > 0
 
-    @patch('adapters.web_scraper.requests.Session.get')
+    @patch('guiyi_server.adapters.web_scraper.requests.Session.get')
     def test_save_to_obsidian(self, mock_get):
         """测试保存到 Obsidian"""
         mock_response = Mock()
@@ -187,7 +187,7 @@ class TestWebScraperEncoding:
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
-    @patch('adapters.web_scraper.requests.Session.get')
+    @patch('guiyi_server.adapters.web_scraper.requests.Session.get')
     def test_chinese_encoding(self, mock_get):
         """测试中文编码处理"""
         mock_response = Mock()
@@ -206,7 +206,7 @@ class TestWebScraperEncoding:
 
         assert "中文" in result["title"] or "中文" in result["content"]
 
-    @patch('adapters.web_scraper.requests.Session.get')
+    @patch('guiyi_server.adapters.web_scraper.requests.Session.get')
     def test_gbk_encoding(self, mock_get):
         """测试 GBK 编码处理"""
         mock_response = Mock()

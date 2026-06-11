@@ -84,6 +84,9 @@ coverage.xml
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Node / frontend dependencies
+node_modules/
+
 # pyenv
 .python-version
 

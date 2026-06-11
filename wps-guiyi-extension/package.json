@@ -1,0 +1,18 @@
+{
+  "name": "wps-guiyi-extension",
+  "version": "1.0.0",
+  "description": "Chrome extension for syncing WPS online documents to GuiYi knowledge system",
+  "scripts": {
+    "build": "tsc && cp -r assets dist/",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.4.0"
+  },
+  "manifest": {
+    "name": "WPS GuiYi Sync",
+    "version": "1.0.0"
+  }
+}

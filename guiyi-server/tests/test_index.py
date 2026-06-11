@@ -3,7 +3,7 @@
 """
 
 import pytest
-from index.txtai_index import IndexManager
+from guiyi_server.index.txtai_index import IndexManager
 import tempfile
 import os
 import shutil

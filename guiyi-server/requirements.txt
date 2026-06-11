@@ -16,6 +16,7 @@ requests==2.32.3           # HTTP 请求库
 # Semantic Index
 # --------------
 txtai==8.0.0               # 语义搜索引擎
+transformers==4.45.2       # txtai 8 依赖 transformers.agents，需固定在兼容版本
 
 # Database
 # --------
@@ -37,10 +38,11 @@ keyring==25.5.0            # 系统密钥管理
 # Feishu SDK
 # ----------
 lark-oapi==1.4.0           # 飞书开放平台 SDK
+legacy-cgi==2.6.4          # Python 3.13 兼容：lark-oapi 依赖 cgi 模块
 
 # Evernote SDK
 # ------------
-evernote3==1.0.4           # 印象笔记 SDK
+evernote3==1.25.14         # 印象笔记 SDK
 
 # Office Files
 # ------------
