@@ -142,6 +142,20 @@ class SyncEngine:
     ) -> str:
         """获取文档内容"""
         try:
+            # 本地文件使用 file_path
+            file_path = doc.get('file_path')
+            if file_path:
+                # 使用适配器获取内容（支持图片等）
+                content_result = adapter.get_document_content_with_metadata(
+                    doc_id=doc['id'],
+                    file_path=file_path
+                )
+                # 保存 AI 摘要和标签到 doc
+                doc['ai_summary'] = content_result.get('ai_summary')
+                doc['ai_tags'] = content_result.get('ai_tags')
+                return content_result.get('content') or ""
+
+            # 飞书等云端文档使用 doc_token
             doc_token = doc.get('doc_token')
             if not doc_token:
                 return ""

@@ -49,6 +49,13 @@ evernote3==1.25.14         # 印象笔记 SDK
 python-docx==1.1.2         # Word 文档处理
 openpyxl==3.1.5            # Excel 文件处理
 PyPDF2==3.0.1              # PDF 文件处理
+python-pptx==0.6.23        # PowerPoint 文件处理
+
+# Image Index (Optional)
+# ----------------------
+mlx>=0.20.0                # MLX 推理框架
+mlx-vlm>=0.1.0             # MLX 视觉语言模型
+Pillow>=10.0.0             # 图片处理
 
 # Utilities
 # ---------

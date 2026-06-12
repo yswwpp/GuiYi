@@ -25,12 +25,17 @@ class LocalDirectory:
     name: str
     path: str
     file_types: List[str]  # 如 ['.md', '.txt', '.py']
-    exclude_patterns: List[str]  # 如 ['node_modules', '.git']
+    exclude_patterns: List[str]  # 按目录名匹配，如 ['node_modules', '.git']
+    exclude_paths: List[str] = None  # 按相对路径排除子目录，如 ['tools', 'a/b/c']
     enabled: bool = True
     max_depth: int = 10
     max_file_size_mb: int = 10
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    def __post_init__(self):
+        if self.exclude_paths is None:
+            self.exclude_paths = []
 
     def to_dict(self) -> dict:
         """转换为字典"""
@@ -40,6 +45,7 @@ class LocalDirectory:
             'path': self.path,
             'file_types': self.file_types,
             'exclude_patterns': self.exclude_patterns,
+            'exclude_paths': self.exclude_paths,
             'enabled': self.enabled,
             'max_depth': self.max_depth,
             'max_file_size_mb': self.max_file_size_mb,
@@ -67,7 +73,7 @@ class LocalDirectoryStore:
         'config', 'conf', '.config',
     ]
 
-    # 默认支持的文件类型（文档类型，不含代码）
+    # 默认支持的文件类型（文档类型，不含代码和图片）
     DEFAULT_FILE_TYPES = [
         # 文本文档
         '.md', '.txt', '.markdown',
@@ -77,6 +83,11 @@ class LocalDirectoryStore:
         '.pptx', '.ppt',      # PowerPoint
         # PDF
         '.pdf',
+    ]
+
+    # 图片类型（可选，需显式启用）
+    IMAGE_FILE_TYPES = [
+        '.jpg', '.jpeg', '.png', '.webp', '.bmp'
     ]
 
     # 禁止索引的敏感路径
@@ -136,6 +147,7 @@ class LocalDirectoryStore:
                 path VARCHAR(512) NOT NULL,
                 file_types TEXT,
                 exclude_patterns TEXT,
+                exclude_paths TEXT,
                 enabled TINYINT(1) DEFAULT 1,
                 max_depth INT DEFAULT 10,
                 max_file_size_mb INT DEFAULT 10,
@@ -144,6 +156,15 @@ class LocalDirectoryStore:
                 UNIQUE INDEX idx_path (path)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+
+        # 旧表追加 exclude_paths 列（幂等）
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'local_directories' AND COLUMN_NAME = 'exclude_paths'
+        """, (db_name,))
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("ALTER TABLE local_directories ADD COLUMN exclude_paths TEXT AFTER exclude_patterns")
+            logger.info("已为 local_directories 表追加 exclude_paths 列")
 
         conn.commit()
         conn.close()
@@ -194,14 +215,15 @@ class LocalDirectoryStore:
         try:
             self._execute("""
                 INSERT INTO local_directories
-                (id, name, path, file_types, exclude_patterns, enabled, max_depth, max_file_size_mb)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (id, name, path, file_types, exclude_patterns, exclude_paths, enabled, max_depth, max_file_size_mb)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 directory.id,
                 directory.name,
                 directory.path,
                 json.dumps(directory.file_types),
                 json.dumps(directory.exclude_patterns),
+                json.dumps(directory.exclude_paths or []),
                 1 if directory.enabled else 0,
                 directory.max_depth,
                 directory.max_file_size_mb
@@ -286,6 +308,9 @@ class LocalDirectoryStore:
                 elif key == 'exclude_patterns' and isinstance(value, list):
                     sets.append("exclude_patterns = %s")
                     params.append(json.dumps(value))
+                elif key == 'exclude_paths' and isinstance(value, list):
+                    sets.append("exclude_paths = %s")
+                    params.append(json.dumps(value))
                 elif key == 'enabled':
                     sets.append("enabled = %s")
                     params.append(1 if value else 0)
@@ -336,6 +361,7 @@ class LocalDirectoryStore:
             path=row['path'],
             file_types=json.loads(row['file_types']) if row['file_types'] else [],
             exclude_patterns=json.loads(row['exclude_patterns']) if row['exclude_patterns'] else [],
+            exclude_paths=json.loads(row['exclude_paths']) if row.get('exclude_paths') else [],
             enabled=bool(row['enabled']),
             max_depth=row['max_depth'],
             max_file_size_mb=row['max_file_size_mb'],
@@ -345,8 +371,33 @@ class LocalDirectoryStore:
 
     @staticmethod
     def get_supported_file_types() -> List[str]:
-        """获取支持的文件类型列表"""
+        """
+        获取支持的文件类型列表（包含图片类型）
+
+        Returns:
+            所有支持的文件类型列表
+        """
+        return LocalDirectoryStore.DEFAULT_FILE_TYPES.copy() + LocalDirectoryStore.IMAGE_FILE_TYPES.copy()
+
+    @staticmethod
+    def get_default_file_types() -> List[str]:
+        """
+        获取默认文件类型列表（不含图片）
+
+        Returns:
+            默认文件类型列表
+        """
         return LocalDirectoryStore.DEFAULT_FILE_TYPES.copy()
+
+    @staticmethod
+    def get_image_file_types() -> List[str]:
+        """
+        获取图片文件类型列表
+
+        Returns:
+            图片文件类型列表
+        """
+        return LocalDirectoryStore.IMAGE_FILE_TYPES.copy()
 
     @staticmethod
     def get_default_exclude_patterns() -> List[str]:

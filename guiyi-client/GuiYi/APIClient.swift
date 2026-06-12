@@ -424,6 +424,7 @@ extension APIClient {
         let path: String
         let fileTypes: [String]
         let excludePatterns: [String]
+        let excludePaths: [String]
         let enabled: Bool
         let maxDepth: Int
         let maxFileSizeMb: Int
@@ -435,6 +436,7 @@ extension APIClient {
             case id, name, path, enabled
             case fileTypes = "file_types"
             case excludePatterns = "exclude_patterns"
+            case excludePaths = "exclude_paths"
             case maxDepth = "max_depth"
             case maxFileSizeMb = "max_file_size_mb"
             case fileCount = "file_count"
@@ -510,6 +512,7 @@ extension APIClient {
         path: String,
         fileTypes: [String]? = nil,
         excludePatterns: [String]? = nil,
+        excludePaths: [String]? = nil,
         enabled: Bool = true,
         maxDepth: Int = 10,
         maxFileSizeMb: Int = 10
@@ -534,6 +537,9 @@ extension APIClient {
         }
         if let excludePatterns = excludePatterns {
             body["exclude_patterns"] = excludePatterns
+        }
+        if let excludePaths = excludePaths {
+            body["exclude_paths"] = excludePaths
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
@@ -563,6 +569,7 @@ extension APIClient {
         name: String? = nil,
         fileTypes: [String]? = nil,
         excludePatterns: [String]? = nil,
+        excludePaths: [String]? = nil,
         enabled: Bool? = nil,
         maxDepth: Int? = nil,
         maxFileSizeMb: Int? = nil
@@ -579,6 +586,7 @@ extension APIClient {
         if let name = name { body["name"] = name }
         if let fileTypes = fileTypes { body["file_types"] = fileTypes }
         if let excludePatterns = excludePatterns { body["exclude_patterns"] = excludePatterns }
+        if let excludePaths = excludePaths { body["exclude_paths"] = excludePaths }
         if let enabled = enabled { body["enabled"] = enabled }
         if let maxDepth = maxDepth { body["max_depth"] = maxDepth }
         if let maxFileSizeMb = maxFileSizeMb { body["max_file_size_mb"] = maxFileSizeMb }

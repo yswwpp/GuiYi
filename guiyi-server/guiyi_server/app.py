@@ -150,6 +150,7 @@ class LocalDirectoryRequest(BaseModel):
     path: str
     file_types: List[str] = []
     exclude_patterns: List[str] = []
+    exclude_paths: List[str] = []
     enabled: bool = True
     max_depth: int = 10
     max_file_size_mb: int = 10
@@ -159,6 +160,7 @@ class LocalDirectoryUpdateRequest(BaseModel):
     name: Optional[str] = None
     file_types: Optional[List[str]] = None
     exclude_patterns: Optional[List[str]] = None
+    exclude_paths: Optional[List[str]] = None
     enabled: Optional[bool] = None
     max_depth: Optional[int] = None
     max_file_size_mb: Optional[int] = None
@@ -1567,6 +1569,7 @@ async def add_local_directory(req: LocalDirectoryRequest):
             path=req.path,
             file_types=req.file_types if req.file_types else LocalDirectoryStore.get_supported_file_types(),
             exclude_patterns=req.exclude_patterns if req.exclude_patterns else LocalDirectoryStore.get_default_exclude_patterns(),
+            exclude_paths=req.exclude_paths or [],
             enabled=req.enabled,
             max_depth=req.max_depth,
             max_file_size_mb=req.max_file_size_mb
@@ -1616,6 +1619,7 @@ async def list_local_directories():
             "path": d.path,
             "file_types": d.file_types,
             "exclude_patterns": d.exclude_patterns,
+            "exclude_paths": d.exclude_paths,
             "enabled": d.enabled,
             "max_depth": d.max_depth,
             "max_file_size_mb": d.max_file_size_mb,
@@ -1646,6 +1650,7 @@ async def get_local_directory(dir_id: str):
         "path": directory.path,
         "file_types": directory.file_types,
         "exclude_patterns": directory.exclude_patterns,
+        "exclude_paths": directory.exclude_paths,
         "enabled": directory.enabled,
         "max_depth": directory.max_depth,
         "max_file_size_mb": directory.max_file_size_mb,
@@ -1672,6 +1677,8 @@ async def update_local_directory(dir_id: str, req: LocalDirectoryUpdateRequest):
             update_fields['file_types'] = req.file_types
         if req.exclude_patterns is not None:
             update_fields['exclude_patterns'] = req.exclude_patterns
+        if req.exclude_paths is not None:
+            update_fields['exclude_paths'] = req.exclude_paths
         if req.enabled is not None:
             update_fields['enabled'] = req.enabled
         if req.max_depth is not None:
@@ -2154,6 +2161,7 @@ def sync_local_files(directory_id: str = None) -> dict:
     1. 增量同步：通过内容哈希检测文件变化
     2. AI 总结：大文件自动调用 AI 生成摘要和标签
     3. 快速跳过：文件大小和修改时间未变则跳过
+    4. 图片索引：支持图片文件的语义描述和标签
 
     Args:
         directory_id: 目录 ID（可选，不指定则同步所有启用的目录）
@@ -2171,13 +2179,19 @@ def sync_local_files(directory_id: str = None) -> dict:
         "updated": 0,
         "skipped": 0,
         "failed": 0,
-        "ai_summarized": 0
+        "ai_summarized": 0,
+        "images_processed": 0
     }
 
     # 检查 AI 服务是否启用
     use_ai = ai_config_store.is_enabled()
     if use_ai:
         logger.info(f"AI 总结服务已启用，阈值: {ai_config_store.get_config().summary_threshold_kb}KB")
+
+    # 检查图片索引是否启用
+    image_index_enabled = os.getenv("GUIYI_IMAGE_INDEX_ENABLED", "false").lower() == "true"
+    if image_index_enabled:
+        logger.info("图片索引服务已启用")
 
     try:
         # 获取文件列表
@@ -2217,11 +2231,28 @@ def sync_local_files(directory_id: str = None) -> dict:
                         stats["skipped"] += 1
                         continue
 
+                # 检查是否是图片文件
+                is_image = LocalFileAdapter.is_image_file(file_path)
+
                 # 获取文件内容（只读）
-                content = local_file_adapter.get_document_content(
-                    doc_id=doc_id,
-                    file_path=file_path
-                )
+                ai_summary = None
+                ai_tags = []
+                if is_image:
+                    content_result = local_file_adapter.get_document_content_with_metadata(
+                        doc_id=doc_id,
+                        file_path=file_path
+                    )
+                    content = content_result.get("content")
+                    ai_summary = content_result.get("ai_summary")
+                    ai_tags = content_result.get("ai_tags") or []
+                    if content:
+                        stats["images_processed"] += 1
+                        logger.debug(f"  图片处理完成: {title}")
+                else:
+                    content = local_file_adapter.get_document_content(
+                        doc_id=doc_id,
+                        file_path=file_path
+                    )
 
                 if not content:
                     stats["skipped"] += 1
@@ -2231,10 +2262,8 @@ def sync_local_files(directory_id: str = None) -> dict:
                 file_info = AIService.get_file_info(file_path)
                 file_size = file_info["size"]
 
-                # AI 总结处理
-                ai_summary = None
-                ai_tags = []
-                if use_ai and ai_config_store.should_summarize(file_size):
+                # AI 总结处理（图片文件已有描述/标签，跳过）
+                if not is_image and use_ai and ai_config_store.should_summarize(file_size):
                     logger.debug(f"  文件较大 ({file_size/1024:.1f}KB)，调用 AI 总结...")
                     ai_result = ai_service.summarize_document(
                         content=content,
@@ -2321,7 +2350,7 @@ def sync_local_files(directory_id: str = None) -> dict:
 
                 # 每 100 个文件打印进度
                 if (i + 1) % 100 == 0:
-                    logger.info(f"  已处理: {i+1}/{len(docs)}, 新增 {stats['added']}, 跳过 {stats['skipped']}, AI总结 {stats['ai_summarized']}")
+                    logger.info(f"  已处理: {i+1}/{len(docs)}, 新增 {stats['added']}, 跳过 {stats['skipped']}, AI总结 {stats['ai_summarized']}, 图片 {stats['images_processed']}")
 
             except Exception as e:
                 logger.error(f"  [{i+1}/{len(docs)}] [!] 失败: {doc.get('title', 'unknown')} - {e}")
@@ -2340,7 +2369,7 @@ def sync_local_files(directory_id: str = None) -> dict:
 
         # 保存索引
         idx.save()
-        logger.info(f"本地文件同步完成: 新增 {stats['added']}, 更新 {stats['updated']}, 跳过 {stats['skipped']}, 失败 {stats['failed']}, AI总结 {stats['ai_summarized']}")
+        logger.info(f"本地文件同步完成: 新增 {stats['added']}, 更新 {stats['updated']}, 跳过 {stats['skipped']}, 失败 {stats['failed']}, AI总结 {stats['ai_summarized']}, 图片 {stats['images_processed']}")
 
     except Exception as e:
         logger.error(f"本地文件同步失败: {e}")

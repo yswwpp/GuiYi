@@ -493,7 +493,8 @@ struct SyncSettingsView: View {
                             directory: dir,
                             onToggle: { toggleDirectory(dir) },
                             onDelete: { deleteDirectory(dir) },
-                            onSync: { syncLocalDirectory(dir) }
+                            onSync: { syncLocalDirectory(dir) },
+                            onUpdateExcludePaths: { paths in updateExcludePaths(dir, paths) }
                         )
                     }
                 }
@@ -700,6 +701,27 @@ struct SyncSettingsView: View {
             }
         }
     }
+
+    private func updateExcludePaths(_ dir: APIClient.LocalDirectory, _ paths: [String]) {
+        Task {
+            do {
+                _ = try await APIClient.shared.updateLocalDirectory(
+                    id: dir.id,
+                    excludePaths: paths
+                )
+                await MainActor.run {
+                    syncMessage = "排除路径已更新"
+                    showingSuccess = true
+                    loadLocalDirectories()
+                }
+            } catch {
+                await MainActor.run {
+                    syncMessage = "更新失败: \(error.localizedDescription)"
+                    showingSuccess = true
+                }
+            }
+        }
+    }
 }
 
 // 紧凑的同步源行视图
@@ -811,44 +833,154 @@ struct LocalDirectoryRowCompact: View {
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onSync: () -> Void
+    let onUpdateExcludePaths: ([String]) -> Void
+
+    @State private var showingExcludeEditor = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Toggle("", isOn: Binding(
-                get: { directory.enabled },
-                set: { _ in onToggle() }
-            ))
-            .labelsHidden()
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Toggle("", isOn: Binding(
+                    get: { directory.enabled },
+                    set: { _ in onToggle() }
+                ))
+                .labelsHidden()
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(directory.name)
-                    .font(.system(size: 12, weight: .medium))
-                Text(directory.path)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(directory.name)
+                        .font(.system(size: 12, weight: .medium))
+                    Text(directory.path)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(directory.path)
+                }
+
+                Spacer()
+
+                if let count = directory.fileCount {
+                    Text("\(count) 文件")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Button {
+                    showingExcludeEditor = true
+                } label: {
+                    Image(systemName: "folder.badge.minus")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.orange)
+                .help("排除子目录")
+
+                Button("同步", action: onSync)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.red)
             }
 
-            Spacer()
-
-            if let count = directory.fileCount {
-                Text("\(count) 文件")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            if !directory.excludePaths.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "minus.circle")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange)
+                    ForEach(directory.excludePaths, id: \.self) { path in
+                        Text(path)
+                            .font(.system(size: 9))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.1))
+                            .cornerRadius(3)
+                    }
+                }
+                .padding(.leading, 36)
             }
-
-            Button("同步", action: onSync)
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-
-            Button(role: .destructive, action: onDelete) {
-                Image(systemName: "trash")
-                    .font(.system(size: 10))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.red)
         }
         .padding(.vertical, 2)
+        .sheet(isPresented: $showingExcludeEditor) {
+            ExcludePathsEditor(
+                excludePaths: directory.excludePaths,
+                onSave: { paths in
+                    onUpdateExcludePaths(paths)
+                    showingExcludeEditor = false
+                }
+            )
+        }
+    }
+}
+
+// 排除子目录编辑器
+struct ExcludePathsEditor: View {
+    let excludePaths: [String]
+    let onSave: ([String]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var paths: [String] = []
+    @State private var newPath = ""
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("排除子目录")
+                .font(.headline)
+
+            Text("输入相对于目录根的路径，如：武汉农村电子商务有限公司项目/tools")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            List {
+                ForEach(paths, id: \.self) { path in
+                    HStack {
+                        Text(path)
+                            .font(.system(size: 12))
+                        Spacer()
+                        Button {
+                            paths.removeAll { $0 == path }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                HStack {
+                    TextField("相对路径", text: $newPath)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12))
+                    Button("添加") {
+                        let trimmed = newPath.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        if !trimmed.isEmpty && !paths.contains(trimmed) {
+                            paths.append(trimmed)
+                        }
+                        newPath = ""
+                    }
+                    .disabled(newPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .frame(minHeight: 120)
+
+            HStack {
+                Button("取消") { dismiss() }
+                Spacer()
+                Button("保存") {
+                    onSave(paths)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(width: 420, height: 320)
+        .onAppear { paths = excludePaths }
     }
 }
 

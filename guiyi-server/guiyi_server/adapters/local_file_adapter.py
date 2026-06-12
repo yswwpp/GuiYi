@@ -17,6 +17,7 @@ from guiyi_server.parsers.word_parser import WordParser
 from guiyi_server.parsers.excel_parser import ExcelParser
 from guiyi_server.parsers.pdf_parser import PDFParser
 from guiyi_server.parsers.powerpoint_parser import PowerPointParser
+from guiyi_server.parsers.image_parser import ImageParser
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,13 @@ class LocalFileAdapter(BaseAdapter):
         # PowerPoint
         '.pptx': PowerPointParser,
         '.ppt': PowerPointParser,
+
+        # 图片
+        '.jpg': ImageParser,
+        '.jpeg': ImageParser,
+        '.png': ImageParser,
+        '.webp': ImageParser,
+        '.bmp': ImageParser,
     }
 
     def __init__(self):
@@ -120,12 +128,30 @@ class LocalFileAdapter(BaseAdapter):
         # 构建排除模式集合
         exclude_patterns = set(directory.exclude_patterns)
 
+        # 构建排除路径集合（相对路径，归一化）
+        exclude_path_set = set()
+        for ep in (directory.exclude_paths or []):
+            ep = ep.strip('/')
+            if ep:
+                exclude_path_set.add(ep)
+
+        # 跟踪 git 仓库根目录，用于自动跳过 git 管理的图片
+        git_roots = set()
+        git_image_skipped = 0
+
         # 遍历目录（只读）
         for root, dirs, files in self._walk_directory(
             expanded_path,
             exclude_patterns,
-            directory.max_depth
+            directory.max_depth,
+            exclude_path_set
         ):
+            # 检测 git 仓库
+            if os.path.isdir(os.path.join(root, '.git')):
+                git_roots.add(root)
+
+            in_git_repo = any(root == gr or root.startswith(gr + os.sep) for gr in git_roots)
+
             for filename in files:
                 try:
                     file_path = os.path.join(root, filename)
@@ -133,6 +159,11 @@ class LocalFileAdapter(BaseAdapter):
 
                     # 检查文件类型
                     if file_types and file_ext not in file_types:
+                        continue
+
+                    # 自动跳过 git 仓库内的图片
+                    if in_git_repo and file_ext in ImageParser.SUPPORTED_EXTENSIONS:
+                        git_image_skipped += 1
                         continue
 
                     # 跳过压缩文件（单行文件，通常很大）
@@ -161,9 +192,12 @@ class LocalFileAdapter(BaseAdapter):
                     logger.warning(f"处理文件失败: {filename} - {e}")
                     continue
 
+        if git_image_skipped > 0:
+            logger.info(f"目录 [{directory.name}] 自动跳过 {git_image_skipped} 张 git 仓库内的图片")
+
         return docs
 
-    def _walk_directory(self, root_path: str, exclude_patterns: set, max_depth: int):
+    def _walk_directory(self, root_path: str, exclude_patterns: set, max_depth: int, exclude_paths: set = None):
         """
         安全遍历目录（只读）
 
@@ -172,25 +206,46 @@ class LocalFileAdapter(BaseAdapter):
 
         Args:
             root_path: 根目录路径
-            exclude_patterns: 排除模式
+            exclude_patterns: 按目录名排除的模式
             max_depth: 最大深度
+            exclude_paths: 按相对路径排除的子目录集合
 
         Yields:
             (root, dirs, files) 元组
         """
+        exclude_paths = exclude_paths or set()
+
         for root, dirs, files in os.walk(root_path, followlinks=False):
-            # 计算当前深度
+            # 计算当前深度和相对路径
             rel_path = os.path.relpath(root, root_path)
             current_depth = 0 if rel_path == '.' else rel_path.count(os.sep) + 1
 
             # 深度限制
             if current_depth > max_depth:
-                # 修改 dirs 列表以停止递归（这不修改文件系统）
                 dirs[:] = []
                 continue
 
-            # 过滤排除的目录（修改 dirs 列表以跳过这些目录，不修改文件系统）
-            dirs[:] = [d for d in dirs if d not in exclude_patterns and not d.startswith('.')]
+            # 检查当前目录本身是否被 exclude_paths 排除
+            if rel_path != '.' and rel_path in exclude_paths:
+                dirs[:] = []
+                continue
+
+            # 过滤排除的目录
+            new_dirs = []
+            for d in dirs:
+                # 按目录名排除
+                if d in exclude_patterns or d.startswith('.'):
+                    continue
+
+                # 按 exclude_paths 排除特定子目录
+                if exclude_paths:
+                    child_rel = os.path.join(rel_path, d) if rel_path != '.' else d
+                    if child_rel in exclude_paths:
+                        continue
+
+                new_dirs.append(d)
+
+            dirs[:] = new_dirs
 
             yield root, dirs, files
 
@@ -286,6 +341,65 @@ class LocalFileAdapter(BaseAdapter):
         content = parser.parse(file_path)
 
         return content
+
+    def get_document_content_with_metadata(self, doc_id: str, file_path: str = None, **kwargs) -> Dict:
+        """
+        获取文档内容和元数据
+
+        对于图片文件，返回 ai_summary 和 ai_tags
+
+        Args:
+            doc_id: 文档 ID
+            file_path: 文件路径（必须提供）
+            **kwargs: 额外参数
+
+        Returns:
+            包含 content 和可能的 ai_summary、ai_tags 的字典
+        """
+        result = {
+            "content": None,
+            "ai_summary": None,
+            "ai_tags": None
+        }
+
+        if not file_path:
+            logger.error(f"缺少 file_path 参数: {doc_id}")
+            return result
+
+        # 安全检查
+        if not os.path.isfile(file_path):
+            logger.error(f"文件不存在: {file_path}")
+            return result
+
+        if not os.access(file_path, os.R_OK):
+            logger.error(f"文件不可读: {file_path}")
+            return result
+
+        # 根据文件扩展名选择解析器
+        file_ext = os.path.splitext(file_path)[1].lower()
+
+        # 检查是否是图片文件
+        if file_ext in ImageParser.SUPPORTED_EXTENSIONS:
+            # 图片文件：使用 ImageParser 获取内容和元数据
+            content = ImageParser.parse(file_path)
+            caption_data = ImageParser.get_caption_data(file_path)
+
+            result["content"] = content
+            if caption_data:
+                result["ai_summary"] = caption_data.get("description")
+                result["ai_tags"] = caption_data.get("tags")
+        else:
+            # 其他文件类型
+            parser = self.PARSERS.get(file_ext, TxtParser)
+            result["content"] = parser.parse(file_path)
+
+        return result
+
+    @staticmethod
+    def is_image_file(file_path: str) -> bool:
+        """检查是否是图片文件"""
+        file_ext = os.path.splitext(file_path)[1].lower()
+        return file_ext in ImageParser.SUPPORTED_EXTENSIONS
 
     def supports_write(self) -> bool:
         """

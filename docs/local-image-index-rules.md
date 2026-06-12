@@ -53,13 +53,13 @@ GuiYi 现有本地文件索引已经支持 Markdown、TXT、PDF、Word、Excel�
 
 | 模块 | 当前职责 | 图片索引改造点 |
 |-----|---------|---------------|
-| `guiyi_server/storage/local_directory_store.py` | 存储本地目录、文件类型、排除规则 | 增加图片扩展名支持，建议默认不开启或由用户显式选择 |
-| `guiyi_server/adapters/local_file_adapter.py` | 扫描目录并按扩展名选择 parser | 增加图片扩展名和 `ImageParser` 映射 |
-| `guiyi_server/parsers/` | 文本文档解析 | 新增 `image_parser.py`，把图片描述转换为文本 |
-| `guiyi_server/ai/` | AI 摘要、关键词、重排 | 新增 `image_captioner.py`，封装 MLX VLM 推理 |
-| `guiyi_server/guiyi_server/app.py` | `sync_local_files` 本地文件同步 | 图片沿用该函数，按文件元数据快速跳过 |
-| `guiyi_server/index/txtai_index.py` | 文本向量索引 | 不需要增加视觉索引，继续索引生成文本 |
-| `guiyi_server/sync/metadata.py` | 记录同步状态、文件大小、mtime、AI 摘要标签 | 复用 `file_size`、`file_mtime`、`content_hash`、`ai_summary`、`ai_tags` |
+| `guiyi-server/storage/local_directory_store.py` | 存储本地目录、文件类型、排除规则 | 增加图片扩展名支持，建议默认不开启或由用户显式选择 |
+| `guiyi-server/adapters/local_file_adapter.py` | 扫描目录并按扩展名选择 parser | 增加图片扩展名和 `ImageParser` 映射 |
+| `guiyi-server/parsers/` | 文本文档解析 | 新增 `image_parser.py`，把图片描述转换为文本 |
+| `guiyi-server/ai/` | AI 摘要、关键词、重排 | 新增 `image_captioner.py`，封装 MLX VLM 推理 |
+| `guiyi-server/sync/engine.py` | `SyncEngine.sync_source()` 本地文件同步入口 | 图片沿用该方法，新增 file_size/file_mtime 快速跳过逻辑 |
+| `guiyi-server/index/txtai_index.py` | 文本向量索引 | 不需要增加视觉索引，继续索引生成文本 |
+| `guiyi-server/sync/metadata.py` | 记录同步状态、文件大小、mtime、AI 摘要标签 | 复用 `file_size`、`file_mtime`、`content_hash`、`ai_summary`、`ai_tags` |
 
 ---
 
@@ -194,8 +194,8 @@ model_path = "/Users/yswwpp/dev/docker_file_sharing/GuiYi/models/mlx-community/Q
 新增：
 
 ```text
-guiyi-server/guiyi_server/ai/image_captioner.py
-guiyi-server/guiyi_server/parsers/image_parser.py
+guiyi-server/ai/image_captioner.py
+guiyi-server/parsers/image_parser.py
 ```
 
 ### `ImageCaptioner` 职责
@@ -343,17 +343,19 @@ doc["ai_tags"] = tags
 
 ## 增量同步策略
 
-图片索引必须避免重复调用 VLM。沿用现有 `sync_local_files` 的快速跳过逻辑：
+图片索引必须避免重复调用 VLM。同步入口为 `SyncEngine.sync_source()`（`sync/engine.py`）。
+
+当前 `SyncEngine` 仅用 `content_hash` 判断是否跳过，`file_size` 和 `file_mtime` 字段虽存在于 `sync_metadata` 表中，但目前同步时写入的均为 0，未参与决策。图片索引需要**新增**两阶段快速跳过逻辑：
 
 1. 扫描本地目录。
 2. 判断文件扩展名是否在目录配置的 `file_types` 中。
 3. 如果扩展名未启用，直接跳过。
 4. 如果扩展名已启用，读取上次同步状态。
-5. 如果已有同步状态，并且 `file_size` 与 `file_mtime` 都未变化，直接快速跳过，不加载图片、不调用模型。
+5. **新增**：如果已有同步状态，并且 `file_size` 与 `file_mtime` 都未变化，直接快速跳过，不加载图片、不调用模型（需在 `SyncEngine` 中补充写入和比较这两个字段）。
 6. 如果是新增图片，或文件大小/修改时间发生变化，读取图片并调用 Qwen2-VL 生成描述、标签和可选图中文字。
 7. 用生成文本计算 `content_hash`。
-8. 如果是新增图片或 `content_hash` 变化，更新 `txtai` 索引和 `sync_metadata`。
-9. 如果 `content_hash` 未变化，只更新文件信息，供下次快速跳过。
+8. 如果是新增图片或 `content_hash` 变化，更新 `txtai` 索引和 `sync_metadata`（含 `ai_summary`、`ai_tags`，需在 `SyncEngine._add_document()` / `_update_document()` 中主动写入）。
+9. 如果 `content_hash` 未变化，只更新 `file_size` 和 `file_mtime`，供下次快速跳过。
 
 ### 哈希口径
 
@@ -475,12 +477,12 @@ curl -X PATCH http://localhost:8765/api/local-directories/{dir_id} \
 
 ### 第一阶段：最小可用
 
-1. 在 `requirements.txt` 增加可选图片索引依赖：`mlx`、`mlx-vlm`、`Pillow`。
-2. 新增 `guiyi_server/ai/image_captioner.py`。
-3. 新增 `guiyi_server/parsers/image_parser.py`。
+1. 在 `requirements.txt` 增加可选图片索引依赖：`mlx`、`mlx-vlm`、`Pillow`（同时确认 `python-pptx` 已列入，当前缺失）。
+2. 新增 `guiyi-server/ai/image_captioner.py`。
+3. 新增 `guiyi-server/parsers/image_parser.py`。
 4. 在 `LocalFileAdapter.PARSERS` 增加图片扩展名映射。
 5. 在 `LocalDirectoryStore.get_supported_file_types()` 返回图片扩展名。
-6. 保持 `sync_local_files` 主流程不变，让图片像普通 parser 一样返回文本。
+6. 在 `SyncEngine` 中补充 `file_size`/`file_mtime` 写入与比较逻辑，并在 `_add_document()`/`_update_document()` 中写入 `ai_summary`/`ai_tags`。
 7. 使用小目录测试 5 到 10 张图片，确认搜索可命中。
 
 ### 第二阶段：质量与稳定性
@@ -509,7 +511,7 @@ curl -X PATCH http://localhost:8765/api/local-directories/{dir_id} \
 
 ```text
 guiyi-server/tests/test_image_parser.py
-guiyi-server/tests/test_image_captioner_parse.py
+guiyi-server/tests/test_image_captioner.py
 ```
 
 测试点：
@@ -593,7 +595,8 @@ curl -X POST http://localhost:8765/api/search \
 
 ---
 
-**文档版本**: 1.0  
-**最后更新**: 2026-06-06  
-**适用范围**: GuiYi 本地目录图片索引  
+**文档版本**: 1.1
+**最后更新**: 2026-06-07
+**适用范围**: GuiYi 本地目录图片索引
 **推荐模型**: `mlx-community/Qwen2-VL-7B-Instruct-4bit`
+**状态**: ✅ 已实现并部署
