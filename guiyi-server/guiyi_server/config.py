@@ -26,6 +26,7 @@ class Settings:
     YINXIANG_SYNC_STATE_PATH: str = str(DATA_DIR / "yinxiang_sync_state.json")
     YINXIANG_ACCOUNTS_PATH: str = str(DATA_DIR / "yinxiang_accounts.json")
     WEB_ASSETS_PATH: str = str(DATA_DIR / "obsidian_vault" / "inbox" / "assets")
+    CREDENTIALS_FILE: str = str(DATA_DIR.parent / "config" / "credentials.json")
 
     FEISHU_COMPANY_APP_ID: Optional[str] = None
     FEISHU_COMPANY_APP_SECRET: Optional[str] = None
@@ -52,6 +53,7 @@ class Settings:
         self.YINXIANG_SYNC_STATE_PATH = os.getenv("YINXIANG_SYNC_STATE_PATH", self.YINXIANG_SYNC_STATE_PATH)
         self.YINXIANG_ACCOUNTS_PATH = os.getenv("YINXIANG_ACCOUNTS_PATH", self.YINXIANG_ACCOUNTS_PATH)
         self.WEB_ASSETS_PATH = os.getenv("WEB_ASSETS_PATH", self.WEB_ASSETS_PATH)
+        self.CREDENTIALS_FILE = os.getenv("GUIYI_CREDENTIALS_FILE", self.CREDENTIALS_FILE)
 
         self.FEISHU_COMPANY_APP_ID = os.getenv("FEISHU_COMPANY_APP_ID")
         self.FEISHU_COMPANY_APP_SECRET = os.getenv("FEISHU_COMPANY_APP_SECRET")

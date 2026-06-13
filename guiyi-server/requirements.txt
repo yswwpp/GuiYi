@@ -33,7 +33,7 @@ watchdog==6.0.0            # 文件系统监控
 
 # Credentials Management
 # ----------------------
-keyring==25.5.0            # 系统密钥管理
+# 凭证存储已迁移到 JSON 文件（${GUIYI_CREDENTIALS_FILE}），不再需要 keyring
 
 # Feishu SDK
 # ----------
