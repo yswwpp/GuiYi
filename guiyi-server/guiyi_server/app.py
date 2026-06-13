@@ -10,8 +10,8 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Dict
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import List, Optional, Dict, Literal
 import uvicorn
 import time
 import hashlib
@@ -33,6 +33,7 @@ from guiyi_server.adapters.local_file_adapter import LocalFileAdapter
 from guiyi_server.storage.obsidian import ObsidianStorage
 from guiyi_server.storage.keychain import KeychainManager
 from guiyi_server.storage.local_directory_store import LocalDirectoryStore, LocalDirectory
+from guiyi_server.storage.search_feedback_store import SearchFeedbackStore
 from guiyi_server.index.txtai_index import IndexManager
 from guiyi_server.sync.metadata import SyncMetadata
 from guiyi_server.sync.engine import SyncEngine
@@ -110,6 +111,9 @@ local_file_adapter = LocalFileAdapter()
 ai_config_store = AIConfigStore(settings.AI_CONFIG_PATH)
 ai_service = AIService(ai_config_store)
 
+# 搜索反馈存储
+feedback_store = SearchFeedbackStore()
+
 
 # ==================== 请求/响应模型 ====================
 
@@ -121,6 +125,7 @@ class SearchRequest(BaseModel):
     query: str
     source: Optional[str] = None
     account: Optional[str] = None
+    doc_type: Optional[str] = None
     limit: int = 20  # 增加默认数量，确保相关结果都能显示
 
 
@@ -130,6 +135,8 @@ class SearchResult(BaseModel):
     url: str
     source: str
     account: Optional[str]
+    doc_type: Optional[str]
+    extension: Optional[str]
     score: float
     text: str
 
@@ -184,6 +191,7 @@ class AISearchRequest(BaseModel):
     query: str
     source: Optional[str] = None
     account: Optional[str] = None
+    doc_type: Optional[str] = None
     limit: int = 20
     enable_keyword_extraction: bool = True  # 是否启用关键词提取
     enable_rerank: bool = True              # 是否启用 Rerank
@@ -195,6 +203,8 @@ class AISearchResult(BaseModel):
     url: Optional[str]
     source: Optional[str]
     account: Optional[str]
+    doc_type: Optional[str]
+    extension: Optional[str]
     score: float                    # 原始向量分数
     rerank_score: Optional[float]   # Rerank 分数
     final_score: float              # 最终综合分数
@@ -230,6 +240,76 @@ class AISearchConfigRequest(BaseModel):
     reranker_jina_key: Optional[str] = None
     reranker_jina_model: Optional[str] = None
     rerank_top_n: Optional[int] = None
+
+
+# ==================== 搜索反馈模型 ====================
+
+class SearchFeedbackResultItem(BaseModel):
+    """搜索反馈结果快照单项"""
+    id: Optional[str] = None
+    title: Optional[str] = None
+    url: Optional[str] = None
+    source: Optional[str] = None
+    account: Optional[str] = None
+    doc_type: Optional[str] = None
+    extension: Optional[str] = None
+    score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    final_score: Optional[float] = None
+    text: Optional[str] = None
+
+
+class SearchFeedbackRequest(BaseModel):
+    """搜索反馈请求"""
+    # 搜索上下文
+    query: str
+    source: Optional[str] = None
+    account: Optional[str] = None
+    doc_type: Optional[str] = None
+    limit: int = 20
+
+    # 搜索模式与状态
+    search_mode: Literal["normal", "ai"]
+    keyword_extraction_enabled: bool = False
+    rerank_enabled: bool = False
+    ai_enhanced: bool = False
+    rerank_used: bool = False
+    keywords_extracted: List[str] = Field(default_factory=list)
+    processing_time_ms: Optional[float] = None
+
+    # 反馈内容
+    rating: Literal["good", "neutral", "bad"]
+    reason_code: Optional[str] = None
+    reason_text: Optional[str] = None
+    expected_result: Optional[str] = None
+
+    # 结果快照
+    results: List[SearchFeedbackResultItem] = Field(default_factory=list)
+
+    # 客户端时间戳
+    client_created_at: Optional[float] = None
+
+    @field_validator('query')
+    @classmethod
+    def query_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError('query 不能为空')
+        return v
+
+    @model_validator(mode='after')
+    def validate_reason_for_bad_rating(self) -> 'SearchFeedbackRequest':
+        # rating=bad 时必须提供 reason_code（去除空白后非空）
+        if self.rating == 'bad':
+            if not self.reason_code or not self.reason_code.strip():
+                raise ValueError('rating 为 bad 时必须提供 reason_code')
+        return self
+
+
+class SearchFeedbackResponse(BaseModel):
+    """搜索反馈响应"""
+    status: str
+    id: str
+    message: str
 
 
 # ==================== 核心路由 ====================
@@ -346,6 +426,7 @@ async def save_url(req: SaveRequest):
             "content": data["content"],
             "url": req.url,
             "source": "web",
+            "doc_type": "web_page",
             "saved_at": data["saved_at"]
         }
 
@@ -398,6 +479,7 @@ async def search(req: SearchRequest):
             query=req.query,
             source=req.source,
             account=req.account,
+            doc_type=req.doc_type,
             limit=req.limit
         )
         return results
@@ -472,6 +554,7 @@ async def ai_search(req: AISearchRequest):
             query=enhanced_query,
             source=req.source,
             account=req.account,
+            doc_type=req.doc_type,
             limit=search_limit
         )
     except Exception as e:
@@ -515,6 +598,7 @@ async def ai_search(req: AISearchRequest):
                 query=req.query,
                 source=req.source,
                 account=req.account,
+                doc_type=req.doc_type,
                 limit=req.limit
             )
         except Exception as e:
@@ -529,6 +613,8 @@ async def ai_search(req: AISearchRequest):
             url=result.get("url"),
             source=result.get("source"),
             account=result.get("account"),
+            doc_type=result.get("doc_type"),
+            extension=result.get("extension"),
             score=result.get("score", 0.0),
             rerank_score=result.get("rerank_score"),
             final_score=result.get("final_score", result.get("score", 0.0)),
@@ -555,6 +641,29 @@ async def list_files():
         "total": len(files),
         "files": [f.name for f in files]
     }
+
+
+# ==================== 搜索反馈 ====================
+
+@app.post("/api/search-feedback", response_model=SearchFeedbackResponse)
+async def submit_search_feedback(req: SearchFeedbackRequest):
+    """
+    保存一次搜索反馈
+
+    第一阶段：仅持久化反馈数据，不影响索引和搜索结果。
+    """
+    try:
+        feedback_id = feedback_store.create_feedback(req.model_dump())
+        return SearchFeedbackResponse(
+            status="success",
+            id=feedback_id,
+            message="搜索反馈已保存"
+        )
+    except Exception as e:
+        logger.error(f"保存搜索反馈失败: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"保存搜索反馈失败: {e}")
 
 
 # ==================== 飞书账号管理 ====================
@@ -1288,7 +1397,8 @@ async def wps_push_and_index(req: WpsPushRequest):
                 url=doc['url'],
                 title=doc['title'],
                 content_hash=content_hash,
-                last_modified=doc.get('updated_at', datetime.now().timestamp())
+                last_modified=doc.get('updated_at', datetime.now().timestamp()),
+                doc_type=doc.get('doc_type'),
             )
 
             # 记录日志
@@ -1296,7 +1406,8 @@ async def wps_push_and_index(req: WpsPushRequest):
                 source="wps",
                 action="index",
                 doc_id=doc_id,
-                doc_title=doc['title']
+                doc_title=doc['title'],
+                doc_type=doc.get('doc_type'),
             )
 
         return {
@@ -1438,7 +1549,8 @@ async def wps_trigger_sync(background_tasks: BackgroundTasks, account: Optional[
                 url=doc['url'],
                 title=doc['title'],
                 content_hash=content_hash,
-                last_modified=doc.get('updated_at', datetime.now().timestamp())
+                last_modified=doc.get('updated_at', datetime.now().timestamp()),
+                doc_type=doc.get('doc_type'),
             )
 
             if existing_state:
@@ -1548,7 +1660,7 @@ async def add_local_directory(req: LocalDirectoryRequest):
     """
     添加本地目录配置
 
-    目录配置会存储到本地 SQLite 数据库
+    目录配置会存储到 MySQL
     """
     try:
         # 检查路径是否存在
@@ -2302,6 +2414,8 @@ def sync_local_files(directory_id: str = None) -> dict:
                         "url": doc.get("url", ""),
                         "title": title,
                         "content_hash": content_hash,
+                        "doc_type": doc.get("doc_type"),
+                        "extension": doc.get("extension") or doc.get("obj_type"),
                         "file_size": file_info["size"],
                         "file_mtime": file_info["mtime"],
                         "ai_summary": ai_summary,
@@ -2320,6 +2434,8 @@ def sync_local_files(directory_id: str = None) -> dict:
                         "url": doc.get("url", ""),
                         "title": title,
                         "content_hash": content_hash,
+                        "doc_type": doc.get("doc_type"),
+                        "extension": doc.get("extension") or doc.get("obj_type"),
                         "file_size": file_info["size"],
                         "file_mtime": file_info["mtime"],
                         "ai_summary": ai_summary,
@@ -2543,21 +2659,25 @@ async def startup_event():
         # 加载已保存的印象笔记账号
         load_saved_yinxiang_accounts()
 
-    # 启动定时调度器
-    scheduler.start()
+    scheduler_enabled = os.getenv("GUIYI_SCHEDULER_ENABLED", "true").lower() == "true"
+    if scheduler_enabled:
+        # 启动定时调度器
+        scheduler.start()
 
-    # 设置默认定时任务
-    scheduler.setup_default_jobs(perform_sync)
+        # 设置默认定时任务
+        scheduler.setup_default_jobs(perform_sync)
+    else:
+        logger.info("已禁用定时同步调度器: GUIYI_SCHEDULER_ENABLED=false")
 
     logger.info("=" * 60)
-    logger.info("📍 API 地址: http://127.0.0.1:8765")
-    logger.info("📖 API 文档: http://127.0.0.1:8765/docs")
+    logger.info(f"📍 API 地址: http://{settings.API_HOST}:{settings.API_PORT}")
+    logger.info(f"📖 API 文档: http://{settings.API_HOST}:{settings.API_PORT}/docs")
     logger.info("=" * 60)
     logger.info("提示:")
     logger.info("  - 首次运行会自动下载向量模型（约 1-2GB）")
     logger.info("  - 索引功能将在第一次搜索或保存时自动启用")
     logger.info("  - 已启用飞书多账号支持")
-    logger.info("  - 已启用定时同步调度器")
+    logger.info(f"  - 定时同步调度器: {'已启用' if scheduler_enabled else '已禁用'}")
     logger.info("=" * 60)
 
 
@@ -2573,4 +2693,4 @@ async def shutdown_event():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    uvicorn.run(app, host=settings.API_HOST, port=settings.API_PORT)

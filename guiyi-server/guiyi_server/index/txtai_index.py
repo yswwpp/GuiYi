@@ -180,6 +180,8 @@ class IndexManager:
             "url": doc["url"],
             "source": doc.get("source", "web"),
             "account": doc.get("account"),
+            "doc_type": doc.get("doc_type"),
+            "extension": doc.get("extension") or doc.get("obj_type"),
             "saved_at": doc.get("saved_at"),
             "content_preview": content_preview,
             }
@@ -264,6 +266,8 @@ class IndexManager:
                 "url": doc["url"],
                 "source": doc.get("source", "web"),
                 "account": doc.get("account"),
+                "doc_type": doc.get("doc_type"),
+                "extension": doc.get("extension") or doc.get("obj_type"),
                 "saved_at": doc.get("saved_at"),
                 "content_preview": content_preview,
             }
@@ -294,6 +298,7 @@ class IndexManager:
         query: str,
         source: Optional[str] = None,
         account: Optional[str] = None,
+        doc_type: Optional[str] = None,
         limit: int = 10
     ) -> List[Dict]:
         """
@@ -303,15 +308,16 @@ class IndexManager:
             query: 搜索查询
             source: 数据源筛选
             account: 账号筛选
+            doc_type: 文档类型筛选
             limit: 返回结果数量
 
         Returns:
             搜索结果列表
         """
-        logger.debug(f"执行搜索: query='{query}', source={source}, account={account}, limit={limit}")
+        logger.debug(f"执行搜索: query='{query}', source={source}, account={account}, doc_type={doc_type}, limit={limit}")
 
         if self.keyword_only:
-            return self._keyword_search(query, source, account, limit)
+            return self._keyword_search(query, source, account, doc_type, limit)
 
         # 执行搜索 - 返回 (id, score) 元组列表
         self._patch_faiss_flat_search()
@@ -337,6 +343,8 @@ class IndexManager:
                 continue
             if account and doc_data.get("account") != account:
                 continue
+            if doc_type and doc_data.get("doc_type") != doc_type:
+                continue
 
             formatted_results.append({
                 "id": uid,
@@ -344,6 +352,8 @@ class IndexManager:
                 "url": doc_data.get("url"),
                 "source": doc_data.get("source"),
                 "account": doc_data.get("account"),
+                "doc_type": doc_data.get("doc_type"),
+                "extension": doc_data.get("extension"),
                 "score": float(score),
                 "text": doc_data.get("content_preview", "")[:200]
             })
@@ -356,6 +366,7 @@ class IndexManager:
         query: str,
         source: Optional[str] = None,
         account: Optional[str] = None,
+        doc_type: Optional[str] = None,
         limit: int = 10
     ) -> List[Dict]:
         """Fallback keyword search over persisted metadata."""
@@ -369,6 +380,8 @@ class IndexManager:
             if source and doc_data.get("source") != source:
                 continue
             if account and doc_data.get("account") != account:
+                continue
+            if doc_type and doc_data.get("doc_type") != doc_type:
                 continue
 
             title = doc_data.get("title") or ""
@@ -392,6 +405,8 @@ class IndexManager:
                 "url": doc_data.get("url"),
                 "source": doc_data.get("source"),
                 "account": doc_data.get("account"),
+                "doc_type": doc_data.get("doc_type"),
+                "extension": doc_data.get("extension"),
                 "score": score,
                 "text": text[:200]
             })

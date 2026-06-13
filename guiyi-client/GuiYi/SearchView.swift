@@ -23,6 +23,22 @@ struct SearchView: View {
     @State private var processingTime: Double = 0
     @State private var rerankUsed: Bool = false
 
+    // 已完成搜索的快照（用于反馈提交，避免与用户实时输入混淆）
+    @State private var lastCompletedQuery: String = ""
+    @State private var lastCompletedResults: [APIClient.AISearchResult] = []
+    @State private var lastSearchMode: String = "normal"        // "normal" / "ai"
+    @State private var lastKeywordExtractionEnabled: Bool = false
+    @State private var lastRerankEnabled: Bool = false
+    @State private var lastAIEnhanced: Bool = false
+    @State private var lastKeywordsExtracted: [String] = []
+    @State private var lastProcessingTime: Double = 0
+    @State private var lastRerankUsed: Bool = false
+
+    // 反馈页面状态
+    @State private var showFeedbackSheet: Bool = false
+    @State private var showFeedbackToast: Bool = false
+    @State private var feedbackToastMessage: String = ""
+
     // 计算属性：是否有任何 AI 功能开启
     private var aiEnabled: Bool {
         keywordExtractionEnabled || rerankEnabled
@@ -56,11 +72,48 @@ struct SearchView: View {
 
                 resultsContainer
                     .transition(.opacity.combined(with: .move(edge: .top)))
+
+                // 反馈入口（搜索完成且有结果时显示）
+                if !isSearching && !searchResults.isEmpty {
+                    feedbackEntryBar
+                }
             }
         }
         .frame(width: 680)
         .fixedSize(horizontal: false, vertical: true)
         .glassEffect(material: .popover)  // popover 比 hudWindow 更不透明
+        .sheet(isPresented: $showFeedbackSheet) {
+            SearchFeedbackView(
+                query: lastCompletedQuery,
+                resultCount: lastCompletedResults.count,
+                onSubmit: { rating, reasonCode, reasonText, expectedResult in
+                    await submitFeedback(
+                        rating: rating,
+                        reasonCode: reasonCode,
+                        reasonText: reasonText,
+                        expectedResult: expectedResult
+                    )
+                },
+                onCancel: {
+                    showFeedbackSheet = false
+                }
+            )
+        }
+        .overlay(alignment: .bottom) {
+            if showFeedbackToast {
+                Text(feedbackToastMessage)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.black.opacity(0.75))
+                    )
+                    .foregroundColor(.white)
+                    .padding(.bottom, 12)
+                    .transition(.opacity)
+            }
+        }
     }
 
     // MARK: - 搜索框 - Spotlight 风格圆角输入框
@@ -343,6 +396,17 @@ struct SearchView: View {
                     processingTime = response.processingTimeMs
                     rerankUsed = response.rerankUsed
                     searchPhase = .completed
+
+                    // 保存「本次已完成搜索」的快照，供反馈提交使用
+                    lastCompletedQuery = query
+                    lastCompletedResults = response.results
+                    lastSearchMode = "ai"
+                    lastKeywordExtractionEnabled = keywordExtractionEnabled
+                    lastRerankEnabled = rerankEnabled
+                    lastAIEnhanced = response.aiEnhanced
+                    lastKeywordsExtracted = response.keywordsExtracted
+                    lastProcessingTime = response.processingTimeMs
+                    lastRerankUsed = response.rerankUsed
                 }
             } else {
                 // 普通搜索 - 转换结果格式
@@ -351,13 +415,15 @@ struct SearchView: View {
                 await MainActor.run {
                     isSearching = false
                     // 转换为 AISearchResult 格式
-                    searchResults = results.map { r in
+                    let converted = results.map { r in
                         APIClient.AISearchResult(
                             id: r.id,
                             title: r.title,
                             url: r.url,
                             source: r.source,
                             account: r.account,
+                            docType: r.docType,
+                            extension: r.extension,
                             score: r.score,
                             rerankScore: nil,
                             finalScore: r.score,
@@ -365,10 +431,22 @@ struct SearchView: View {
                             aiKeywords: nil
                         )
                     }
+                    searchResults = converted
                     keywordsExtracted = []
                     processingTime = 0
                     rerankUsed = false
                     searchPhase = .completed
+
+                    // 普通搜索的快照
+                    lastCompletedQuery = query
+                    lastCompletedResults = converted
+                    lastSearchMode = "normal"
+                    lastKeywordExtractionEnabled = false
+                    lastRerankEnabled = false
+                    lastAIEnhanced = false
+                    lastKeywordsExtracted = []
+                    lastProcessingTime = 0
+                    lastRerankUsed = false
                 }
             }
         } catch {
@@ -376,6 +454,111 @@ struct SearchView: View {
                 isSearching = false
                 searchPhase = .idle
                 errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    // MARK: - 反馈入口栏
+
+    private var feedbackEntryBar: some View {
+        HStack {
+            Spacer()
+            Button {
+                showFeedbackSheet = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 11))
+                    Text("评价本次搜索")
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(AppColors.textTertiary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                )
+            }
+            .buttonStyle(.plain)
+            .help("对本次搜索结果进行评价")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.85))
+    }
+
+    // MARK: - 反馈提交
+
+    private func submitFeedback(
+        rating: String,
+        reasonCode: String?,
+        reasonText: String?,
+        expectedResult: String?
+    ) async -> Bool {
+        let snapshotItems: [APIClient.SearchFeedbackResultItem] = lastCompletedResults.map { r in
+            APIClient.SearchFeedbackResultItem(
+                id: r.id,
+                title: r.title,
+                url: r.url,
+                source: r.source,
+                account: r.account,
+                docType: r.docType,
+                extension: r.extension,
+                score: r.score,
+                rerankScore: r.rerankScore,
+                finalScore: r.finalScore,
+                text: r.text
+            )
+        }
+
+        let request = APIClient.SearchFeedbackRequest(
+            query: lastCompletedQuery,
+            source: nil,
+            account: nil,
+            docType: nil,
+            limit: 20,
+            searchMode: lastSearchMode,
+            keywordExtractionEnabled: lastKeywordExtractionEnabled,
+            rerankEnabled: lastRerankEnabled,
+            aiEnhanced: lastAIEnhanced,
+            rerankUsed: lastRerankUsed,
+            keywordsExtracted: lastKeywordsExtracted,
+            processingTimeMs: lastSearchMode == "ai" ? lastProcessingTime : nil,
+            rating: rating,
+            reasonCode: reasonCode,
+            reasonText: reasonText,
+            expectedResult: expectedResult,
+            results: snapshotItems,
+            clientCreatedAt: Date().timeIntervalSince1970
+        )
+
+        do {
+            _ = try await APIClient.shared.submitSearchFeedback(request)
+            await MainActor.run {
+                showFeedbackSheet = false
+                showFeedbackToast(message: "反馈已保存")
+            }
+            return true
+        } catch {
+            await MainActor.run {
+                showFeedbackToast(message: "反馈保存失败，请稍后重试")
+            }
+            return false
+        }
+    }
+
+    private func showFeedbackToast(message: String) {
+        feedbackToastMessage = message
+        withAnimation(.easeIn(duration: 0.15)) {
+            showFeedbackToast = true
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    showFeedbackToast = false
+                }
             }
         }
     }
@@ -562,5 +745,253 @@ struct YinxiangLogo: Shape {
         ))
 
         return path
+    }
+}
+
+// MARK: - 搜索反馈视图
+
+struct SearchFeedbackView: View {
+    let query: String
+    let resultCount: Int
+    /// 提交回调，返回是否提交成功（成功后 sheet 由 SearchView 控制关闭）
+    let onSubmit: (_ rating: String, _ reasonCode: String?, _ reasonText: String?, _ expectedResult: String?) async -> Bool
+    let onCancel: () -> Void
+
+    @State private var rating: String = ""               // good / neutral / bad
+    @State private var reasonCode: String = ""
+    @State private var reasonText: String = ""
+    @State private var expectedResult: String = ""
+    @State private var isSubmitting: Bool = false
+    @State private var validationError: String = ""
+
+    /// 原因分类（与后端 reason_code 对齐）
+    private let reasonOptions: [(code: String, label: String)] = [
+        ("missing_expected_doc", "没搜到应该出现的内容"),
+        ("bad_ranking", "结果排序不对"),
+        ("irrelevant_results", "结果太泛或不相关"),
+        ("wrong_summary", "摘要/预览不足以判断"),
+        ("wrong_ai_keywords", "AI 关键词理解错"),
+        ("rerank_worse", "智能重排后变差"),
+        ("source_missing", "某个数据源缺失"),
+        ("other", "其他"),
+    ]
+
+    /// 文本字段最大长度（与后端一致）
+    private let maxTextLength = 2000
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // 标题
+            HStack {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .foregroundColor(AppColors.brandAccent)
+                Text("评价本次搜索")
+                    .font(.system(size: 16, weight: .semibold))
+                Spacer()
+            }
+
+            // 搜索词信息
+            VStack(alignment: .leading, spacing: 4) {
+                Text("搜索词")
+                    .font(.caption)
+                    .foregroundColor(AppColors.textTertiary)
+                Text(query)
+                    .font(.system(size: 13))
+                    .lineLimit(2)
+                Text("共 \(resultCount) 条结果")
+                    .font(.caption2)
+                    .foregroundColor(AppColors.textTertiary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            )
+
+            // 评价
+            VStack(alignment: .leading, spacing: 8) {
+                Text("您的评价")
+                    .font(.system(size: 13, weight: .medium))
+                HStack(spacing: 8) {
+                    ratingButton(value: "good", label: "满意", icon: "hand.thumbsup")
+                    ratingButton(value: "neutral", label: "一般", icon: "minus.circle")
+                    ratingButton(value: "bad", label: "不满意", icon: "hand.thumbsdown")
+                }
+            }
+
+            // 不满意时显示原因
+            if rating == "bad" {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("问题原因")
+                        .font(.system(size: 13, weight: .medium))
+                    LazyVGrid(columns: [
+                        GridItem(.flexible()),
+                        GridItem(.flexible())
+                    ], spacing: 6) {
+                        ForEach(reasonOptions, id: \.code) { opt in
+                            reasonButton(code: opt.code, label: opt.label)
+                        }
+                    }
+                }
+            }
+
+            // 补充说明
+            VStack(alignment: .leading, spacing: 4) {
+                Text("补充说明（可选）")
+                    .font(.system(size: 13, weight: .medium))
+                TextEditor(text: $reasonText)
+                    .font(.system(size: 12))
+                    .frame(height: 50)
+                    .padding(4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.gray.opacity(0.3))
+                    )
+                    .onChange(of: reasonText) { _, newValue in
+                        if newValue.count > maxTextLength {
+                            reasonText = String(newValue.prefix(maxTextLength))
+                        }
+                    }
+            }
+
+            // 期望结果
+            VStack(alignment: .leading, spacing: 4) {
+                Text("期望结果（可选）")
+                    .font(.system(size: 13, weight: .medium))
+                TextEditor(text: $expectedResult)
+                    .font(.system(size: 12))
+                    .frame(height: 50)
+                    .padding(4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.gray.opacity(0.3))
+                    )
+                    .onChange(of: expectedResult) { _, newValue in
+                        if newValue.count > maxTextLength {
+                            expectedResult = String(newValue.prefix(maxTextLength))
+                        }
+                    }
+            }
+
+            // 校验错误提示
+            if !validationError.isEmpty {
+                Text(validationError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
+            // 操作按钮
+            HStack {
+                Spacer()
+                Button("取消") {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isSubmitting)
+
+                Button(action: handleSubmit) {
+                    if isSubmitting {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .frame(width: 60, height: 16)
+                    } else {
+                        Text("提交")
+                            .frame(width: 60)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(rating.isEmpty || isSubmitting)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+    }
+
+    // MARK: - 子视图
+
+    private func ratingButton(value: String, label: String, icon: String) -> some View {
+        Button {
+            rating = value
+            validationError = ""
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                Text(label)
+                    .font(.system(size: 11))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(rating == value ? AppColors.brandAccent.opacity(0.2) : Color(NSColor.controlBackgroundColor).opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(rating == value ? AppColors.brandAccent : Color.gray.opacity(0.3), lineWidth: 1)
+            )
+            .foregroundColor(rating == value ? AppColors.brandAccent : AppColors.textSecondary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func reasonButton(code: String, label: String) -> some View {
+        Button {
+            reasonCode = (reasonCode == code) ? "" : code
+            validationError = ""
+        } label: {
+            HStack {
+                Image(systemName: reasonCode == code ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 12))
+                Text(label)
+                    .font(.system(size: 11))
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(reasonCode == code ? AppColors.brandAccent.opacity(0.15) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(reasonCode == code ? AppColors.brandAccent : Color.gray.opacity(0.3), lineWidth: 1)
+            )
+            .foregroundColor(reasonCode == code ? AppColors.brandAccent : AppColors.textSecondary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 提交
+
+    private func handleSubmit() {
+        validationError = ""
+        // 前端校验
+        if rating.isEmpty {
+            validationError = "请选择评价"
+            return
+        }
+        if rating == "bad" && reasonCode.isEmpty {
+            validationError = "请选择问题原因"
+            return
+        }
+
+        isSubmitting = true
+        Task {
+            let success = await onSubmit(
+                rating,
+                reasonCode.isEmpty ? nil : reasonCode,
+                reasonText.isEmpty ? nil : reasonText,
+                expectedResult.isEmpty ? nil : expectedResult
+            )
+            await MainActor.run {
+                isSubmitting = false
+                if !success {
+                    // 失败时保留输入内容，由父视图通过 toast 提示
+                    validationError = "保存失败，请稍后重试"
+                }
+            }
+        }
     }
 }

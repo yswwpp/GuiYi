@@ -141,7 +141,9 @@ def sync_feishu_wiki():
                         url=doc.get("url", ""),
                         title=title,
                         content_hash=content_hash,
-                        last_modified=datetime.now().timestamp()
+                        last_modified=datetime.now().timestamp(),
+                        doc_type=doc.get("doc_type"),
+                        extension=doc.get("obj_type")
                     )
                     stats["added"] += 1
                 else:

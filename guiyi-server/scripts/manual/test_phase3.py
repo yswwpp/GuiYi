@@ -90,7 +90,8 @@ def test_sync_metadata():
         url="https://feishu.cn/docs/test123",
         title="测试文档",
         content_hash=metadata._calculate_hash("这是测试内容"),
-        last_modified=datetime.now().timestamp()
+        last_modified=datetime.now().timestamp(),
+        doc_type="docx"
     )
     print("✓ 文档插入成功")
 

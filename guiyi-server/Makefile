@@ -12,6 +12,7 @@ help:
 	@echo "可用目标:"
 	@echo "  install       安装依赖"
 	@echo "  run           启动服务"
+	@echo "  dev-local     启动本机隔离开发服务"
 	@echo "  run-phase3    兼容命令：启动服务"
 	@echo "  test          运行测试"
 	@echo "  test-cov      运行测试并生成覆盖率报告"
@@ -113,10 +114,13 @@ files:
 	@echo "列出已保存文件..."
 	curl -s http://localhost:8765/api/files | python -m json.tool
 
-# 开发模式（自动重载）
+# 开发模式（自动重载，使用本机隔离开发环境）
 dev:
-	@echo "开发模式启动..."
-	uvicorn guiyi_server.app:app --reload --host 127.0.0.1 --port 8765
+	@./scripts/start_dev.sh
+
+# 本机隔离开发模式（自动重载）
+dev-local:
+	@./scripts/start_dev.sh
 
 # 数据库初始化
 init-db:

@@ -603,6 +603,7 @@ class YinxiangAdapter:
                     "url": self._build_note_url(account, note["guid"]),
                     "source": "yinxiang",
                     "account": acc_name,
+                    "doc_type": "note",
                     "notebook": notebook_name,
                     "created": note["created"],
                     "updated": note["updated"],

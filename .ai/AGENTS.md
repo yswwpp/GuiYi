@@ -1,156 +1,62 @@
-# GuiYi 项目记忆
+# GuiYi Agent Instructions
 
-> 本地优先的个人知识收集与检索系统
+GuiYi is a local-first personal knowledge collection and retrieval system.
 
----
+## Must-Follow Rules
 
-## 项目目的
+- Development and deployment environments are fully isolated.
+- Deployment backend runs from `~/deploy/GuiYi/` on `127.0.0.1:8765`.
+- Deployment data is `~/dev/docker_file_sharing/GuiYi/data`; deployment models are `~/dev/docker_file_sharing/GuiYi/models`.
+- Development backend runs from this repository on `127.0.0.1:8766`.
+- Development data is `./data-dev`; development models are `./models-dev`.
+- Deployment MySQL schema is `guiyi`; development MySQL schema is `guiyi_dev`.
+- Never point development code at deployment data or deployment model directories.
+- Never write the deployment MySQL schema from development or tests.
+- Development startup defaults to no scheduled sync. Enable scheduled sync only when explicitly testing sync behavior.
+- Do not commit local runtime assets or secrets: `.env.dev`, `*.dev.env`, `data-dev/`, `models-dev/`, credentials, logs, or virtual environments.
+- Use `uv` for Python dependency management. Do not use plain `pip` for project dependency installation.
 
-**GuiYi（归一）** 是一个本地优先的知识管理系统，核心场景：
+## Repository Boundaries
 
-- **一键保存**：全局快捷键呼出，粘贴链接即保存
-- **多源聚合**：支持飞书、本地文件、印象笔记、夸克网盘、网页
-- **索引优先**：三方平台内容只建索引，原文档保留在原平台
-- **增量同步**：智能检测变更，只更新变化的部分
-- **语义检索**：支持自然语言搜索
-- **AI 增强**：大文件自动生成摘要和标签
+- Backend code lives in `guiyi-server/`.
+- Swift client code lives in `guiyi-client/`.
+- Project docs live in `docs/`.
+- Cross-workspace project memory lives in `.ai/` and is committed.
+- `.codex/` is a local symlink entry and is not committed.
+- This project does not use `.claude/`.
 
----
+## Read Before Editing
 
-## 仓库地图
+- Development/deployment flow: `docs/runbooks/development-local.md` and `docs/runbooks/deployment-local.md`.
+- General architecture and storage model: `docs/architecture.md`.
+- Feishu indexing behavior: `docs/feishu-index-rules.md`.
+- Local file indexing behavior: `docs/local-file-index-rules.md`.
+- Local image indexing behavior: `docs/local-image-index-rules.md`.
+- Search feedback behavior: `docs/PRD/新增需求4_搜索反馈闭环设计.md`.
 
-```
-GuiYi/
-├── guiyi-server/          # Python 后端服务（FastAPI + txtai）
-│   ├── adapters/          # 数据源适配器
-│   ├── ai/                # AI 服务（摘要、标签生成）
-│   ├── sync/              # 同步引擎
-│   ├── index/             # 索引管理
-│   ├── parsers/           # 文件解析器
-│   └── storage/           # 存储管理
-├── guiyi-client/          # Swift 前端（SwiftUI）
-│   ├── Views/             # UI 视图
-│   ├── Services/          # API 客户端
-│   └── Utils/             # 工具类
-├── data/                  # 运行时数据（Git 忽略）
-│   ├── index/             # txtai 索引
-│   └── obsidian_vault/    # Obsidian 存储
-├── docs/                  # 项目文档
-└── .ai/                   # 跨工作空间项目记忆（提交到 Git）
-```
+Read the relevant document before changing startup scripts, sync behavior, indexing, storage, database schema, credentials, or frontend/backend connection logic.
 
----
-
-## 规则与命令
-
-### 开发环境
-
-**Python 环境**：
+## Common Commands
 
 ```bash
-cd guiyi-server
-source .venv/bin/activate  # 激活虚拟环境
-uv pip install <package>   # 使用 uv 安装依赖
-```
-
-**Swift 环境**：
-
-- 使用 Xcode 打开 `guiyi-client/GuiYi.xcodeproj`
-- 不需要手动配置环境
-
-### 架构约束
-
-1. **前后端分离**：
-   - 前端（Swift）负责 UI 交互、快捷键、状态栏
-   - 后端（Python）负责数据处理、同步、索引
-   - 通过 HTTP API 通信（`http://localhost:8765`）
-
-2. **索引优先策略**：
-   - 三方平台（飞书、WPS、印象笔记、夸克）仅索引摘要
-   - 网页内容完整存储到 Obsidian
-   - 同步元数据存储在 SQLite
-
-3. **增量同步机制**：
-   - 通过内容哈希（MD5）检测变更
-   - 记录同步状态到 `data/sync_metadata.sqlite`
-   - 只更新变化的文档
-
-### 允许的操作
-
-- ✅ 在 `guiyi-server/` 下开发 Python 后端
-- ✅ 在 `guiyi-client/` 下开发 Swift 前端
-- ✅ 修改 `docs/` 下的文档
-- ✅ 更新 `.ai/` 下的跨工作空间记忆
-- ✅ 运行测试和调试
-
-### 禁止的操作
-
-- ❌ 不要直接修改 `data/` 目录（运行时数据）
-- ❌ 不要在根目录创建虚拟环境（在 `guiyi-server/` 下创建）
-- ❌ 不要使用 pip 安装依赖（使用 uv）
-- ❌ 不要在前后端项目中混合代码
-
-### 常用命令
-
-**后端开发**：
-
-```bash
-# 启动开发服务器
+# Start isolated development backend
 cd guiyi-server
 source .venv/bin/activate
-python main.py
+./scripts/start_dev.sh
 
-# 运行测试
+# Run backend tests
+cd guiyi-server
+source .venv/bin/activate
 pytest
 
-# 安装依赖
+# Install backend dependencies
+cd guiyi-server
+source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-**前端开发**：
+## Current Storage Facts
 
-```bash
-# 在 Xcode 中运行项目
-# 或使用命令行
-cd guiyi-client
-xcodebuild -project GuiYi.xcodeproj -scheme GuiYi
-```
-
-### 技术栈
-
-**后端**：
-
-- FastAPI + uvicorn
-- trafilatura（网页抓取）
-- txtai + BAAI/bge-m3（语义索引）
-- SQLite + SQLAlchemy
-- APScheduler（定时任务）
-- watchdog（文件监听）
-
-**前端**：
-
-- Swift + SwiftUI
-- HotKey（快捷键）
-- URLSession（API 通信）
-
----
-
-## 重要注意事项
-
-1. **凭证管理**：所有 API Token、Cookie 使用 macOS Keychain 存储（keyring 库）
-2. **数据安全**：索引数据存储在本地，不上传云端
-3. **Obsidian 路径**：网页内容存储在 `data/obsidian_vault/inbox/`
-4. **API 端口**：后端服务监听 `http://localhost:8765`
-5. **Python 版本**：使用 Python 3.11+
-6. **模型目录**：程序用到的所有模型统一放在 `/Users/yswwpp/dev/docker_file_sharing/GuiYi/models` 下，不要放到 `guiyi-server/data/index`
-7. **Agent 记忆目录**：只提交 `.ai/` 到 Git；`.codex/` 是本地软链入口，不提交；项目中不使用 `.claude/`
-
----
-
-## 相关文档
-
-- [需求与技术方案](./docs/归一GuiYi-需求与技术方案.md)
-- [飞书文档索引规则](./docs/feishu-index-rules.md)
-- [本地文件索引规则](./docs/local-file-index-rules.md)
-- [架构决策记录](./docs/decisions/)
-- [运维手册](./docs/runbooks/)
+- Runtime metadata is stored in MySQL, not SQLite.
+- `sync_metadata`, `sync_logs`, `local_directories`, `search_feedback`, and `search_feedback_results` are MySQL tables.
+- txtai index files and Obsidian content remain filesystem data under the active data directory.

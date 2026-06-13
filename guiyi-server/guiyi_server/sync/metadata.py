@@ -108,6 +108,9 @@ class SyncMetadata:
                 account VARCHAR(255),
                 url TEXT,
                 title TEXT,
+                doc_type VARCHAR(50) DEFAULT NULL,
+                mime_type VARCHAR(100) DEFAULT NULL,
+                extension VARCHAR(20) DEFAULT NULL,
                 content_hash VARCHAR(64),
                 file_size BIGINT DEFAULT 0,
                 file_mtime DOUBLE DEFAULT 0,
@@ -117,9 +120,14 @@ class SyncMetadata:
                 last_synced DOUBLE,
                 sync_status VARCHAR(20) DEFAULT 'synced',
                 created_at DOUBLE DEFAULT 0,
-                INDEX idx_source_account (source, account)
+                INDEX idx_source_account (source, account),
+                INDEX idx_doc_type (source, doc_type),
+                INDEX idx_extension (extension)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+
+        # 兼容已有表：补齐新增字段（doc_type / mime_type / extension）
+        self._migrate_add_type_columns(cursor)
 
         # 同步日志表
         cursor.execute("""
@@ -131,14 +139,115 @@ class SyncMetadata:
                 action VARCHAR(50),
                 doc_id VARCHAR(255),
                 doc_title TEXT,
+                doc_type VARCHAR(50) DEFAULT NULL,
                 error_message TEXT,
                 INDEX idx_sync_time (sync_time)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
+        # 兼容已有表：补齐 sync_logs.doc_type
+        self._migrate_add_column(cursor, 'sync_logs', 'doc_type', 'VARCHAR(50) DEFAULT NULL')
+
         conn.commit()
         conn.close()
         logger.info(f"MySQL 数据库初始化完成: {db_name}")
+
+    def _migrate_add_column(self, cursor, table: str, column: str, definition: str):
+        """给已有表补齐单个字段（若不存在）"""
+        try:
+            cursor.execute(f"DESCRIBE `{table}`")
+            existing_cols = {row[0] for row in cursor.fetchall()}
+            if column not in existing_cols:
+                cursor.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+                logger.info(f"已为表 {table} 添加字段 {column}")
+        except Exception as e:
+            logger.warning(f"检查/添加字段 {table}.{column} 失败: {e}")
+
+    def _migrate_add_type_columns(self, cursor):
+        """为已有 sync_metadata 表补齐 doc_type/mime_type/extension 并回填"""
+        # 先检查字段是否存在，不存在则添加
+        cursor.execute("DESCRIBE sync_metadata")
+        existing_cols = {row[0] for row in cursor.fetchall()}
+
+        for col, defn in [
+            ('doc_type', 'VARCHAR(50) DEFAULT NULL'),
+            ('mime_type', 'VARCHAR(100) DEFAULT NULL'),
+            ('extension', 'VARCHAR(20) DEFAULT NULL'),
+        ]:
+            if col not in existing_cols:
+                cursor.execute(f"ALTER TABLE sync_metadata ADD COLUMN `{col}` {defn}")
+                logger.info(f"sync_metadata 添加字段: {col}")
+
+        # 添加索引（幂等，已存在则忽略）
+        for idx_sql in [
+            "ALTER TABLE sync_metadata ADD INDEX idx_doc_type (source, doc_type)",
+            "ALTER TABLE sync_metadata ADD INDEX idx_extension (extension)",
+        ]:
+            try:
+                cursor.execute(idx_sql)
+            except Exception as e:
+                logger.debug(f"添加索引跳过: {e}")
+
+        # 回填 doc_type / extension（幂等，每次启动都跑，只更新空值）
+        self._backfill_doc_type(cursor)
+
+    def _backfill_doc_type(self, cursor):
+        """回填 doc_type / extension（幂等，只更新 NULL 或空字符串的行）"""
+        try:
+            # 1) local 源：从 URL（file://...）推断扩展名
+            cursor.execute("""
+                UPDATE sync_metadata
+                SET extension = LOWER(SUBSTRING_INDEX(url, '.', -1))
+                WHERE source = 'local' AND (extension IS NULL OR extension = '')
+                  AND url LIKE '%%.%%'
+            """)
+            # 2) local 源：doc_type = 扩展名
+            cursor.execute("""
+                UPDATE sync_metadata
+                SET doc_type = extension
+                WHERE source = 'local' AND (doc_type IS NULL OR doc_type = '')
+                  AND extension IS NOT NULL AND extension != ''
+            """)
+            # 3) feishu 源：先修正旧值 "drive"/"wiki" -> NULL，再回填
+            cursor.execute("""
+                UPDATE sync_metadata
+                SET doc_type = NULL
+                WHERE source = 'feishu' AND doc_type IN ('drive', 'wiki')
+            """)
+            cursor.execute("""
+                UPDATE sync_metadata
+                SET doc_type = CASE
+                    WHEN url LIKE '%%/wiki/%%' THEN 'wiki'
+                    WHEN url LIKE '%%/sheets/%%' THEN 'sheet'
+                    WHEN url LIKE '%%/bitable/%%' THEN 'bitable'
+                    WHEN url LIKE '%%/mindnote/%%' THEN 'mindnote'
+                    WHEN url LIKE '%%/docx/%%' THEN 'docx'
+                    WHEN url LIKE '%%/drive/%%' THEN 'docx'
+                    ELSE 'docx'
+                END
+                WHERE source = 'feishu' AND (doc_type IS NULL OR doc_type = '')
+            """)
+            # 4) wps 源
+            cursor.execute("""
+                UPDATE sync_metadata
+                SET doc_type = 'wps_doc'
+                WHERE source = 'wps' AND (doc_type IS NULL OR doc_type = '')
+            """)
+            # 5) yinxiang 源
+            cursor.execute("""
+                UPDATE sync_metadata
+                SET doc_type = 'note'
+                WHERE source = 'yinxiang' AND (doc_type IS NULL OR doc_type = '')
+            """)
+            # 6) web 源（网页收藏）
+            cursor.execute("""
+                UPDATE sync_metadata
+                SET doc_type = 'web_page', extension = 'html'
+                WHERE source = 'web' AND (doc_type IS NULL OR doc_type = '')
+            """)
+            logger.info("doc_type 回填完成")
+        except Exception as e:
+            logger.warning(f"回填 doc_type 失败: {e}")
 
     def _calculate_hash(self, content: str) -> str:
         """计算内容哈希"""
@@ -164,21 +273,28 @@ class SyncMetadata:
         file_size: int = 0,
         file_mtime: float = 0.0,
         ai_summary: str = None,
-        ai_tags: str = None
+        ai_tags: str = None,
+        doc_type: str = None,
+        mime_type: str = None,
+        extension: str = None
     ):
         """插入或更新文档同步状态"""
         now = datetime.now().timestamp()
 
         self._execute("""
             INSERT INTO sync_metadata
-            (id, source, account, url, title, content_hash, last_modified, last_synced, sync_status,
+            (id, source, account, url, title, doc_type, mime_type, extension,
+             content_hash, last_modified, last_synced, sync_status,
              file_size, file_mtime, ai_summary, ai_tags)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 source = VALUES(source),
                 account = VALUES(account),
                 url = VALUES(url),
                 title = VALUES(title),
+                doc_type = VALUES(doc_type),
+                mime_type = VALUES(mime_type),
+                extension = VALUES(extension),
                 content_hash = VALUES(content_hash),
                 last_modified = VALUES(last_modified),
                 last_synced = VALUES(last_synced),
@@ -188,7 +304,8 @@ class SyncMetadata:
                 ai_summary = VALUES(ai_summary),
                 ai_tags = VALUES(ai_tags)
         """, (
-            doc_id, source, account, url, title, content_hash, last_modified, now, "synced",
+            doc_id, source, account, url, title, doc_type, mime_type, extension,
+            content_hash, last_modified, now, "synced",
             file_size, file_mtime, ai_summary, ai_tags
         ))
 
@@ -269,6 +386,7 @@ class SyncMetadata:
         doc_id: str,
         doc_title: str,
         account: str = None,
+        doc_type: str = None,
         error: str = None
     ):
         """记录同步日志"""
@@ -276,9 +394,9 @@ class SyncMetadata:
 
         self._execute("""
             INSERT INTO sync_logs
-            (sync_time, source, account, action, doc_id, doc_title, error_message)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (now, source, account, action, doc_id, doc_title, error))
+            (sync_time, source, account, action, doc_id, doc_title, doc_type, error_message)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (now, source, account, action, doc_id, doc_title, doc_type, error))
 
     def get_sync_stats(self, source: str = None, account: str = None) -> Dict:
         """获取同步统计信息"""
@@ -326,6 +444,60 @@ class SyncMetadata:
             }
 
         return result
+
+    def get_doc_type_stats(self, source: str = None) -> Dict[str, int]:
+        """获取按 doc_type 分组的统计信息"""
+        query = """
+            SELECT source, doc_type, COUNT(*) as count
+            FROM sync_metadata
+            WHERE sync_status = 'synced'
+        """
+        params = []
+
+        if source:
+            query += " AND source = %s"
+            params.append(source)
+
+        query += " GROUP BY source, doc_type"
+
+        rows = self._execute(query, tuple(params), fetch_all=True) or []
+
+        result = {}
+        for row in rows:
+            key = row['source']
+            if key not in result:
+                result[key] = {}
+            result[key][row['doc_type'] or 'unknown'] = row['count']
+        return result
+
+    def get_docs_by_type(
+        self,
+        doc_type: str,
+        source: str = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict]:
+        """按 doc_type 查询文档"""
+        query = "SELECT * FROM sync_metadata WHERE sync_status = 'synced' AND doc_type = %s"
+        params = [doc_type]
+
+        if source:
+            query += " AND source = %s"
+            params.append(source)
+
+        query += " ORDER BY last_modified DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+        return self._execute(query, tuple(params), fetch_all=True) or []
+
+    def get_doc_type(self, doc_id: str) -> Optional[str]:
+        """获取指定文档的 doc_type"""
+        row = self._execute(
+            "SELECT doc_type FROM sync_metadata WHERE id = %s",
+            (doc_id,),
+            fetch_one=True
+        )
+        return row['doc_type'] if row else None
 
 
 # 使用示例

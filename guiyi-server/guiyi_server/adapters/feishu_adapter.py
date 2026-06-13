@@ -204,7 +204,8 @@ class FeishuAdapter:
                         "url": f"https://feishu.cn/docx/{file.get('token')}",
                         "source": "feishu",
                         "account": f"feishu_{account_name}",
-                        "doc_type": "drive",
+                        "doc_type": file_type,
+                        "obj_type": file_type,
                         "doc_token": file.get('token'),
                         "updated_at": datetime.now().timestamp(),
                         "store_locally": False
@@ -303,9 +304,9 @@ class FeishuAdapter:
                     "url": f"https://feishu.cn/wiki/{node_token}",
                     "source": "feishu",
                     "account": f"feishu_{account_name}",
-                    "doc_type": "wiki",
-                    "doc_token": obj_token,
+                    "doc_type": obj_type,
                     "obj_type": obj_type,
+                    "doc_token": obj_token,
                     "space_name": space_name,
                     "updated_at": datetime.now().timestamp(),
                     "store_locally": False
@@ -375,7 +376,8 @@ class FeishuAdapter:
                         "url": f"https://feishu.cn/docx/{file_token}",
                         "source": "feishu",
                         "account": f"feishu_{account.name}",
-                        "doc_type": "drive",
+                        "doc_type": file_type,
+                        "obj_type": file_type,
                         "doc_token": file_token,
                         "updated_at": datetime.now().timestamp(),
                         "store_locally": False

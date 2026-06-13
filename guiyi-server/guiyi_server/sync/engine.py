@@ -116,6 +116,7 @@ class SyncEngine:
                     doc_id=doc_id,
                     doc_title=doc.get("title", ""),
                     account=account,
+                    doc_type=doc.get("doc_type"),
                     error=str(e)
                 )
                 stats["failed"] += 1
@@ -190,7 +191,9 @@ class SyncEngine:
                 url=doc.get("url", ""),
                 title=doc.get("title", "无标题"),
                 content_hash=content_hash,
-                last_modified=last_modified
+                last_modified=last_modified,
+                doc_type=doc.get("doc_type"),
+                extension=doc.get("extension") or doc.get("obj_type")
             )
         except Exception as e:
             logger.error(f"新增文档失败: {e}")
@@ -208,7 +211,9 @@ class SyncEngine:
                 url=doc.get("url", ""),
                 title=doc.get("title", "无标题"),
                 content_hash=content_hash,
-                last_modified=last_modified
+                last_modified=last_modified,
+                doc_type=doc.get("doc_type"),
+                extension=doc.get("extension") or doc.get("obj_type")
             )
         except Exception as e:
             logger.error(f"更新文档失败: {e}")

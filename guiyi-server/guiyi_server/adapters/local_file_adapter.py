@@ -286,8 +286,9 @@ class LocalFileAdapter(BaseAdapter):
                 "url": f"file://{file_path}",
                 "source": "local",
                 "account": directory.id,
-                "doc_type": "file",
+                "doc_type": self._normalize_doc_type(file_ext),
                 "obj_type": file_ext[1:] if file_ext else "unknown",
+                "extension": file_ext[1:] if file_ext else None,
                 "file_path": file_path,
                 "directory_name": directory.name,
                 "relative_path": rel_path,
@@ -400,6 +401,32 @@ class LocalFileAdapter(BaseAdapter):
         """检查是否是图片文件"""
         file_ext = os.path.splitext(file_path)[1].lower()
         return file_ext in ImageParser.SUPPORTED_EXTENSIONS
+
+    @staticmethod
+    def _normalize_doc_type(file_ext: str) -> str:
+        """根据文件扩展名归类 doc_type
+
+        归类规则（用于前端按类型筛选）：
+        - 图片类扩展统一归为 "image"
+        - PDF 归为 "pdf"
+        - 办公文档（word/excel/ppt）归为 "office"
+        - 标记/笔记类（md/txt）归为 "markdown"/"text"
+        - 其他直接使用扩展名本身（如 "html"、"py"）
+        """
+        if not file_ext:
+            return "unknown"
+        ext = file_ext.lower().lstrip(".")
+        if f".{ext}" in ImageParser.SUPPORTED_EXTENSIONS:
+            return "image"
+        if ext == "pdf":
+            return "pdf"
+        if ext in ("doc", "docx", "xls", "xlsx", "ppt", "pptx", "wps", "et", "dps"):
+            return "office"
+        if ext == "md":
+            return "markdown"
+        if ext == "txt":
+            return "text"
+        return ext or "unknown"
 
     def supports_write(self) -> bool:
         """

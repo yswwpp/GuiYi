@@ -65,8 +65,16 @@ class APIClient {
         let url: String?
         let source: String?
         let account: String?
+        let docType: String?
+        let `extension`: String?
         let score: Double
         let text: String
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, url, source, account, score, text
+            case docType = "doc_type"
+            case `extension`
+        }
     }
 
     struct StatusResponse: Codable {
@@ -776,6 +784,8 @@ extension APIClient {
         let url: String?
         let source: String?
         let account: String?
+        let docType: String?           // 文档类型
+        let `extension`: String?       // 文件扩展名
         let score: Double              // 原始向量分数
         let rerankScore: Double?       // Rerank 分数
         let finalScore: Double         // 最终综合分数
@@ -784,6 +794,8 @@ extension APIClient {
 
         enum CodingKeys: String, CodingKey {
             case id, title, url, source, account, score, text
+            case docType = "doc_type"
+            case `extension`
             case rerankScore = "rerank_score"
             case finalScore = "final_score"
             case aiKeywords = "ai_keywords"
@@ -983,5 +995,114 @@ extension APIClient {
         }
 
         return httpResponse.statusCode == 200
+    }
+}
+
+// MARK: - 搜索反馈 API
+
+extension APIClient {
+    /// 搜索反馈结果快照单项
+    struct SearchFeedbackResultItem: Codable {
+        let id: String?
+        let title: String?
+        let url: String?
+        let source: String?
+        let account: String?
+        let docType: String?
+        let `extension`: String?
+        let score: Double?
+        let rerankScore: Double?
+        let finalScore: Double?
+        let text: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, url, source, account, score, text
+            case docType = "doc_type"
+            case `extension`
+            case rerankScore = "rerank_score"
+            case finalScore = "final_score"
+        }
+    }
+
+    /// 搜索反馈请求
+    struct SearchFeedbackRequest: Codable {
+        let query: String
+        let source: String?
+        let account: String?
+        let docType: String?
+        let limit: Int
+
+        let searchMode: String                     // "normal" / "ai"
+        let keywordExtractionEnabled: Bool
+        let rerankEnabled: Bool
+        let aiEnhanced: Bool
+        let rerankUsed: Bool
+        let keywordsExtracted: [String]
+        let processingTimeMs: Double?
+
+        let rating: String                         // "good" / "neutral" / "bad"
+        let reasonCode: String?
+        let reasonText: String?
+        let expectedResult: String?
+
+        let results: [SearchFeedbackResultItem]
+        let clientCreatedAt: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case query, source, account, limit, rating, results
+            case docType = "doc_type"
+            case searchMode = "search_mode"
+            case keywordExtractionEnabled = "keyword_extraction_enabled"
+            case rerankEnabled = "rerank_enabled"
+            case aiEnhanced = "ai_enhanced"
+            case rerankUsed = "rerank_used"
+            case keywordsExtracted = "keywords_extracted"
+            case processingTimeMs = "processing_time_ms"
+            case reasonCode = "reason_code"
+            case reasonText = "reason_text"
+            case expectedResult = "expected_result"
+            case clientCreatedAt = "client_created_at"
+        }
+    }
+
+    /// 搜索反馈响应
+    struct SearchFeedbackResponse: Codable {
+        let status: String
+        let id: String
+        let message: String
+    }
+
+    /// 提交搜索反馈
+    func submitSearchFeedback(_ feedback: SearchFeedbackRequest) async throws -> SearchFeedbackResponse {
+        guard let url = URL(string: "\(APIClient.baseURL)/api/search-feedback") else {
+            throw APIError.invalidResponse
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let encoder = JSONEncoder()
+        request.httpBody = try encoder.encode(feedback)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                throw APIError.serverError(errorResponse.detail)
+            }
+            // 422 详情可能是数组（Pydantic 校验错误），简单提示
+            throw APIError.serverError("反馈保存失败 (状态码: \(httpResponse.statusCode))")
+        }
+
+        do {
+            return try JSONDecoder().decode(SearchFeedbackResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError
+        }
     }
 }
